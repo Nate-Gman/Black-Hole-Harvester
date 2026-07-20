@@ -32,11 +32,17 @@ THE SYSTEM (from goal.md):
   HARVESTING      Halbach array (NdFeB, ~2 T) -> inductive coupling -> 135 GW
   CONSTELLATION   1095 spheres, one harvest per day
 
-Two modes (toggle with TAB):
-  1. OVERVIEW   Orbit the whole system: black hole, orbit path, sphere,
-                string, station, gravity laser beams. Orbit is to scale;
-                BH/sphere/station are visually enlarged for visibility.
-  2. SIMULATE   Animate one full orbital cycle: charging at EP, outbound
+Modes (cycle with TAB):
+  1. PREVIEW    Whole-system map: black hole, orbit path, sphere, string,
+                station, gravity laser. Orbit is to scale (1 AU = 1 unit) and
+                the black hole is capped so the eccentric path clearly CLEARS
+                it (bodies are enlarged for legibility).
+  2. MODEL      To-scale digital-twin inspector. [ / ] cycle the focused
+                component -- black hole, energy sphere, station, string, or the
+                whole system -- each framed at a comfortable size with its real
+                dimensions and a true-scale bar. The SYSTEM focus proves the
+                orbit clears the BH (EP/ISCO, EP/r_s).
+  3. SIMULATE   Animate one full orbital cycle: charging at EP, outbound
                 transit, harvesting at AP, inbound return. Live HUD shows
                 RPM, energy, orbital position, phase, power flow.
 
@@ -178,10 +184,19 @@ SPHERE_E_OPER     = 0.5 * SPHERE_I * SPHERE_OMEGA_TGT**2    # operating energy a
 DS = 1.0 / AU_M   # display scale: 1 AU = 1.0 model units
 
 # -- Scene scale: all components sized relative to orbit for visibility --
-# Computed from orbit extent so BH, sphere, station are always visible
+# The orbit is rendered to scale (1 AU = 1 unit). Real bodies (BH ~28 km, sphere
+# ~321 m, station ~km) are ~1e8x smaller than the orbit (AU-scale), so they are
+# enlarged for visibility. CRITICAL: the black hole is *capped* so its accretion
+# disk (which reaches ~DISK_OUTER_MULT x the event-horizon display radius) stays
+# well inside periastron -- this guarantees the orbit path clearly CLEARS the
+# black hole instead of plunging into it (see build_black_hole / build_orbit).
+DISK_OUTER_MULT = 4.5              # accretion disk outer edge = this x BH_DISP_R
+BH_CLEAR_FRAC   = 0.40            # BH complex may fill at most 40% of periastron
 ORBIT_MAX_DS = max(ORBIT_EP_M, ORBIT_AP_M) * DS   # largest orbit radius in display units
+ORBIT_EP_DS  = ORBIT_EP_M * DS                     # periastron radius in display units
 SCENE_R = max(ORBIT_MAX_DS, 0.1)                    # scene radius for scaling
-BH_DISP_R = SCENE_R * 0.04                          # BH visible at 4% of orbit
+# Physically-honest black-hole size: never larger than the periastron-clearance cap.
+BH_DISP_R = min(SCENE_R * 0.04, ORBIT_EP_DS * BH_CLEAR_FRAC / DISK_OUTER_MULT)
 SPHERE_DISP_R = SCENE_R * 0.015                    # sphere visible at 1.5% of orbit
 STATION_DISP_S = SCENE_R * 0.025                   # station size at 2.5% of orbit
 STRING_DISP_SCALE = SCENE_R * 0.08 / max(STRING_LENGTH_M * DS, 1e-12)  # string visible
@@ -966,7 +981,8 @@ def build_orbit():
     # Phase zone markers (4 colored dots at phase boundaries)
     phase_colors = [C_PHASE1, C_PHASE2, C_PHASE3, C_PHASE4]
     phase_names = ["Charging", "Outbound", "Harvesting", "Inbound"]
-    phase_fracs = [0.0, 0.1, 0.5, 0.9]
+    _pb = compute_phase_bounds()
+    phase_fracs = [_pb[0], _pb[1], _pb[2], _pb[3]]
     phase_v, phase_f = [], []
     for i, (tf, pc) in enumerate(zip(phase_fracs, phase_colors)):
         nu = true_anomaly_from_time(tf)
@@ -1023,10 +1039,10 @@ def build_orbit():
         m.append(Mesh(ghost_v, ghost_f, _mix(C_SPHERE, C_ORBIT, 0.5),
                       "Trajectory markers", alpha=80, emissive=True))
     return Part("orbit", "ORBITAL PATH", m, [
-        f"Periastron (EP): {ORBIT_EP_AU:.2f} AU ({ORBIT_EP_M:.3e} m)",
+        f"Periastron (EP): {ORBIT_EP_AU:.4f} AU ({ORBIT_EP_M:.3e} m)",
         f"Apastron (AP): {ORBIT_AP_AU:.2f} AU ({ORBIT_AP_M:.3e} m)",
         f"Semi-major axis: {ORBIT_A_M/AU_M:.2f} AU",
-        f"Eccentricity: {ORBIT_E:.3f}",
+        f"Eccentricity: {ORBIT_E:.4f}",
         f"Orbital period: {ORBIT_PERIOD_YR:.1f} years",
         f"Velocity at EP: {ORBIT_V_EP/1000:.1f} km/s",
         f"Velocity at AP: {ORBIT_V_AP/1000:.1f} km/s",
@@ -1034,6 +1050,7 @@ def build_orbit():
         f"Gravity at AP: {gravity_at_distance(ORBIT_AP_M):.2e} m/s^2",
         f"EP drift/cycle: {EP_DRIFT_KM:.4f} km (compensated by laser)",
         f"Safety margin: {SAFETY_MARGIN*100:.0f}% excess impact parameter",
+        f"EP/ISCO ratio: {ORBIT_EP_M/BH_RISCO:.0f}x (stable orbit)",
         f"Highly eccentric ellipse around {CURRENT_SYSTEM_NAME}",
         "Phase zones: Charging (EP) -> Outbound -> Harvesting (AP) -> Inbound",
         "Velocity vectors: orange=EP (max), green=AP (min)",
@@ -2219,6 +2236,7 @@ class BHHRenderer:
         self.section = False
         self.hovered = None
         self.selected = None
+        self.no_label_keys = set()   # part keys whose labels are suppressed
         self.cull = True
         self.min_area = 12.0
         self.zoom_min = 0.1
@@ -2274,6 +2292,8 @@ class BHHRenderer:
         _rot_cache = {}
         _explode_amt = self.explode_amt
         _has_explode = _explode_amt > 0.001
+        _center = self.center
+        _has_center = bool(np.any(_center))
         for pi, part in enumerate(self.parts):
             off = part.explode * _explode_amt if _has_explode else None
             highlight = (pi == (self.selected if self.selected is not None else self.hovered))
@@ -2299,7 +2319,10 @@ class BHHRenderer:
                     wv = mesh.verts + mesh.pivot
                 if off is not None:
                     wv = wv + off
-                cam = wv @ RcamT
+                if _has_center:
+                    cam = (wv - _center) @ RcamT
+                else:
+                    cam = wv @ RcamT
                 cam[:, 2] += self.dist
                 allcam.append(cam)
                 col = mesh._highlight_col if highlight else mesh._emissive_col
@@ -2436,7 +2459,7 @@ class BHHRenderer:
                 pcy = cy - focal * cen[1] / cen[2]
                 rad = float(np.max(np.hypot(scx - pcx, scy - pcy))) * 0.55 + 6
                 screeninfo.append((pi, pcx, pcy, rad, cen[2]))
-                if self.show_labels and font:
+                if self.show_labels and font and part.key not in self.no_label_keys:
                     labels.append((cen[2], (pcx, pcy), part.name))
 
         # Paint far-to-near
@@ -2814,7 +2837,19 @@ class App:
         self.fmed = pygame.font.SysFont("consolas", 18, bold=True)
         self._recompute_viewport()
 
-        self.mode = "overview"   # "overview" | "simulate" | "depletion" | "systems" | "custom"
+        self.mode = "preview"   # "preview" | "model" | "simulate" | "depletion" | "systems" | "custom"
+        # MODEL mode: to-scale digital-twin inspector. Cycle focus targets to
+        # frame each detailed component; "system" shows the to-scale orbit +
+        # clearance proof that the path clears the black hole.
+        self.model_targets = ["system", "blackhole", "sphere", "station", "string"]
+        self.model_target_names = {
+            "system": "SYSTEM (to scale)", "blackhole": "BLACK HOLE",
+            "sphere": "ENERGY SPHERE", "station": "SPACE STATION", "string": "STRING & TIP",
+        }
+        self.model_focus = 0
+        self._model_cache = {}
+        self._model_real_mpu = {}   # real metres per world-unit, per focus target
+        self._model_needs_frame = True
         self.systems = list(PRESET_SYSTEMS)
         self.system_idx = 0
         self.current_system = self.systems[0]
@@ -2933,7 +2968,7 @@ class App:
         global CURRENT_SYSTEM_NAME
         global HOMES_POWERED
         global EP_DRIFT_KM
-        global ORBIT_MAX_DS, SCENE_R, BH_DISP_R, SPHERE_DISP_R, STATION_DISP_S, STRING_DISP_SCALE, CAMERA_HOME_DIST
+        global ORBIT_MAX_DS, ORBIT_EP_DS, SCENE_R, BH_DISP_R, SPHERE_DISP_R, STATION_DISP_S, STRING_DISP_SCALE, CAMERA_HOME_DIST
 
         self.current_system = cfg
         CURRENT_SYSTEM_NAME = cfg.name
@@ -3010,10 +3045,13 @@ class App:
         # Display scale
         DS = cfg.ds
 
-        # Scene scale: all components sized relative to orbit for visibility
+        # Scene scale: all components sized relative to orbit for visibility.
+        # Black hole capped so its accretion disk stays inside periastron (the
+        # orbit must clearly clear the BH). See module-level notes above.
         ORBIT_MAX_DS = max(ORBIT_EP_M, ORBIT_AP_M) * DS
+        ORBIT_EP_DS = ORBIT_EP_M * DS
         SCENE_R = max(ORBIT_MAX_DS, 0.1)
-        BH_DISP_R = SCENE_R * 0.04
+        BH_DISP_R = min(SCENE_R * 0.04, ORBIT_EP_DS * BH_CLEAR_FRAC / DISK_OUTER_MULT)
         SPHERE_DISP_R = SCENE_R * 0.015
         STATION_DISP_S = SCENE_R * 0.025
         STRING_DISP_SCALE = SCENE_R * 0.08 / max(STRING_LENGTH_M * DS, 1e-12)
@@ -3046,6 +3084,11 @@ class App:
         self._string_cache_ext = -1.0
         self._laser_cache = None
         self._laser_cache_t = -1.0
+        self._model_cache = {}
+        self._model_needs_frame = True
+        self.renderer.center = np.array([0.0, 0.0, 0.0])
+        self.renderer.zoom_min = 0.1
+        self.renderer.zoom_max = 100.0
         self._info_surf = None
         self._help_surf = None
 
@@ -3068,14 +3111,16 @@ class App:
         self.status_t = 2.5
 
     def _active_parts(self):
-        """Parts list for current mode (includes dynamic sphere/string in sim mode)."""
+        """Parts list for current mode (includes dynamic sphere/string in preview+sim mode)."""
         if self.mode == "depletion":
             return [build_depletion_scene(self.dep)]
         if self.mode in ("systems", "custom"):
             return []
+        if self.mode == "model":
+            return self._model_parts()
         parts = list(self.parts)
-        if self.mode == "simulate":
-            # Exclude sample sphere/string (last 2 parts) in simulate mode
+        if self.mode in ("preview", "simulate"):
+            # Exclude sample sphere/string (last 2 parts) - use dynamic instead
             parts = parts[:-2]
             sx, sz, r = self.sim.orbital_pos()
             # Cache sphere part (geometry doesn't change, only position)
@@ -3122,6 +3167,108 @@ class App:
             if trail is not None:
                 parts.append(trail)
         return parts
+
+    # ------------------------------------------------------------------ MODEL
+    def _model_parts(self):
+        """Detailed, to-scale parts for the MODEL inspector, one focus at a time.
+
+        Single components are normalised to a standard viewing size at the origin
+        (so they clear the renderer near-plane and frame consistently); the true
+        physical size is conveyed by the scale bar + spec panel."""
+        target = self.model_targets[self.model_focus]
+        cached = self._model_cache.get(target)
+        if cached is not None:
+            return cached
+        if target == "system":
+            cached = self._model_system_parts()
+            self._model_real_mpu[target] = AU_M   # 1 world unit == 1 AU
+        else:
+            if target == "blackhole":
+                cached = [build_black_hole()]
+                real_per_disp = BH_RS / max(BH_DISP_R, 1e-30)
+            elif target == "sphere":
+                cached = [build_sphere()]
+                real_per_disp = SPHERE_RADIUS_M / max(SPHERE_DISP_R, 1e-30)
+            elif target == "station":
+                cached = [build_station()]
+                real_per_disp = 1000.0 / max(STATION_DISP_S, 1e-30)  # ~1 km reference span
+            elif target == "string":
+                cached = [build_string(1.0)]
+                real_per_disp = 1.0 / max(DS * STRING_DISP_SCALE, 1e-30)
+            else:
+                cached, real_per_disp = [], AU_M
+            self._model_real_mpu[target] = self._normalize_parts(cached, real_per_disp)
+        self._model_cache[target] = cached
+        return cached
+
+    def _normalize_parts(self, parts, real_per_disp):
+        """Scale+centre parts to unit bounding radius at the origin.
+        Returns real metres represented by one world unit after normalisation."""
+        center, radius = self._part_world_bounds(parts)
+        if radius <= 0:
+            return real_per_disp
+        inv = 1.0 / radius
+        for part in parts:
+            for mesh in part.meshes:
+                mesh.verts = mesh.verts * inv
+                mesh.pivot = (mesh.pivot - center) * inv
+                if mesh._static_wv is not None:
+                    mesh._static_wv = (mesh._static_wv - center) * inv
+        # 1 world unit now == `radius` display-units == radius*real_per_disp metres
+        return radius * real_per_disp
+
+    def _model_system_parts(self):
+        """To-scale whole-system view: orbit + black hole + station + a sphere
+        parked on the ellipse, proving the path clears the black hole."""
+        keep = {"blackhole", "orbit", "station"}
+        parts = [p for p in self.parts if p.key in keep]
+        # A detailed sphere parked partway along the outbound leg for context.
+        sph = build_sphere()
+        sx, sz, _ = orbital_position(0.16)
+        for mesh in sph.meshes:
+            mesh.pivot = mesh.pivot + np.array([sx, 0.0, sz])
+            mesh._static_wv = None
+        parts.append(sph)
+        return parts
+
+    def _part_world_bounds(self, parts):
+        """Axis-aligned bounds (center, radius) of parts in world space."""
+        mins = None
+        maxs = None
+        for part in parts:
+            for mesh in part.meshes:
+                wv = mesh._static_wv if mesh._static_wv is not None else (mesh.verts + mesh.pivot)
+                if wv is None or len(wv) == 0:
+                    continue
+                lo = wv.min(axis=0)
+                hi = wv.max(axis=0)
+                mins = lo if mins is None else np.minimum(mins, lo)
+                maxs = hi if maxs is None else np.maximum(maxs, hi)
+        if mins is None:
+            return np.zeros(3), 1.0
+        center = (mins + maxs) * 0.5
+        radius = float(np.linalg.norm(maxs - mins)) * 0.5
+        return center, max(radius, 1e-9)
+
+    def _frame_model(self):
+        """Point the camera at the focused model component and frame it."""
+        parts = self._active_parts()
+        center, radius = self._part_world_bounds(parts)
+        self.renderer.center = np.asarray(center, dtype=float)
+        d = radius * 2.6
+        self.renderer.dist = d
+        self.renderer.dist_target = d
+        self.renderer.zoom_min = radius * 0.15
+        self.renderer.zoom_max = radius * 40.0
+        self.renderer.pan = np.array([0.0, 0.0])
+        # keep current az/el; only reframe distance & center
+        self._model_needs_frame = False
+
+    def _model_cycle_focus(self, delta):
+        self.model_focus = (self.model_focus + delta) % len(self.model_targets)
+        self._model_needs_frame = True
+        tgt = self.model_targets[self.model_focus]
+        self._flash(f"Model: {self.model_target_names[tgt]}")
 
     def handle_events(self, dt):
         for e in pygame.event.get():
@@ -3210,9 +3357,25 @@ class App:
             self.systems.append(cfg)
         self.system_idx = len(self.systems) - 1
         self._apply_system(cfg)
-        self.mode = "overview"
+        self._set_mode("preview")
         self._flash(f"Custom system applied: {cfg.name}")
         self._custom_surf = None
+
+    def _set_mode(self, new_mode):
+        """Switch modes, handling MODEL camera setup/teardown."""
+        if new_mode == self.mode:
+            return
+        leaving_model = self.mode == "model"
+        self.mode = new_mode
+        if new_mode == "model":
+            self.renderer.selected = None
+            self._model_needs_frame = True
+        elif leaving_model:
+            # Restore the shared orbit camera used by preview/simulate.
+            self.renderer.center = np.array([0.0, 0.0, 0.0])
+            self.renderer.zoom_min = 0.1
+            self.renderer.zoom_max = 100.0
+            self.renderer.reset_view()
 
     def _key(self, k):
         if k == pygame.K_ESCAPE:
@@ -3224,24 +3387,29 @@ class App:
                 return True
             return False
         if k == pygame.K_TAB:
-            modes = ["overview", "simulate", "depletion", "systems", "custom"]
+            modes = ["preview", "model", "simulate", "depletion", "systems", "custom"]
             idx = modes.index(self.mode) if self.mode in modes else 0
-            self.mode = modes[(idx + 1) % len(modes)]
+            self._set_mode(modes[(idx + 1) % len(modes)])
             self._flash(f"Mode: {self.mode.upper()}")
             return True
+        # MODEL mode: cycle the focused component with [ ] or LEFT/RIGHT
+        if self.mode == "model" and k in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET,
+                                          pygame.K_LEFT, pygame.K_RIGHT):
+            self._model_cycle_focus(1 if k in (pygame.K_RIGHTBRACKET, pygame.K_RIGHT) else -1)
+            return True
         if k == pygame.K_s:
-            self.mode = "systems"
+            self._set_mode("systems")
             self._flash("Mode: SYSTEMS")
             return True
         if k == pygame.K_c:
-            self.mode = "custom"
+            self._set_mode("custom")
             self._flash("Mode: CUSTOM BUILD")
             return True
-        # ENTER in systems mode -> go to overview of selected system
+        # ENTER in systems mode -> go to preview of selected system
         if k == pygame.K_RETURN or k == pygame.K_KP_ENTER:
             if self.mode == "systems":
                 self._apply_system(self.systems[self.system_idx])
-                self.mode = "overview"
+                self._set_mode("preview")
                 self._flash(f"Viewing: {self.current_system.name}")
                 return True
         # Number keys 1-5 select preset system
@@ -3283,7 +3451,11 @@ class App:
             self._flash("Labels " + ("ON" if self.show_labels else "OFF"))
             return True
         if k == pygame.K_r:
-            self.renderer.reset_view()
+            if self.mode == "model":
+                self.renderer.az, self.renderer.el = 0.5, 0.35
+                self._model_needs_frame = True
+            else:
+                self.renderer.reset_view()
             self._flash("View reset")
             return True
         if k == pygame.K_p:
@@ -3338,6 +3510,8 @@ class App:
     def update(self, dt):
         self.sim.update(dt)
         self.dep.update(dt)
+        if self.mode == "model" and self._model_needs_frame:
+            self._frame_model()
         self.renderer.tick(dt)
         if self.status_t > 0:
             self.status_t -= dt
@@ -3359,6 +3533,12 @@ class App:
                       "gyro": self.sim.gyro_angle,
                       "bh": 0.0, "bh_disk": self.sim.t_frac * 2.0}
 
+        # Suppress transient-effect labels in preview to reduce clutter near EP
+        if self.mode == "preview":
+            self.renderer.no_label_keys = {"trail", "effects"}
+        else:
+            self.renderer.no_label_keys = set()
+
         # Temporarily set renderer parts
         old_parts = self.renderer.parts
         self.renderer.parts = parts
@@ -3374,6 +3554,8 @@ class App:
             self._draw_systems_hud()
         elif self.mode == "custom":
             self._draw_custom_hud()
+        elif self.mode == "model":
+            self._draw_model_hud()
         else:
             self._draw_hud()
 
@@ -3406,7 +3588,7 @@ class App:
         if self.mode == "simulate":
             title += f"  |  SIMULATE  |  Phase: {self.sim.phase_name()}  |  Cycle: {self.sim.cycle_count}"
         else:
-            title += "  |  OVERVIEW"
+            title += "  |  PREVIEW"
         surf.blit(_render_text(self.font, title, self.current_system.color_accent), (12, 8))
 
         if self.mode == "simulate":
@@ -3416,13 +3598,18 @@ class App:
             desc_surf = _render_text(self.fsmall, desc, C_DIM)
             dx = self.W // 2 - desc_surf.get_width() // 2
             surf.blit(desc_surf, (dx, 56))
-        elif self.mode == "overview":
-            # Component legend in overview mode
+        elif self.mode == "preview":
+            # Component legend in preview mode
             legend_y = 40
-            _panel(surf, self.W // 2 - 200, legend_y, 400, 28, alpha=200)
-            legend = "OVERVIEW - Click parts to inspect | TAB to simulate | I for info"
+            _panel(surf, self.W // 2 - 260, legend_y, 520, 28, alpha=200)
+            legend = "PREVIEW (orbit to scale) | TAB: MODEL to-scale inspector / SIMULATE | click parts | I info"
             ls = _render_text(self.fsmall, legend, C_DIM)
             surf.blit(ls, (self.W // 2 - ls.get_width() // 2, legend_y + 8))
+            # Phase description
+            desc = SimState.PHASE_DESC[self.sim.phase_idx]
+            desc_surf = _render_text(self.fsmall, desc, C_DIM)
+            dx = self.W // 2 - desc_surf.get_width() // 2
+            surf.blit(desc_surf, (dx, 72))
 
         # Right panel: live stats (simulate) or system specs (overview)
         px = self.W - 290
@@ -3432,29 +3619,32 @@ class App:
         pygame.draw.rect(surf, self.current_system.color_accent, (px, py, 280, 3))
         surf.blit(_render_text(self.fsmall, f"SYSTEM: {self.current_system.name}", self.current_system.color_accent), (px+8, py+6))
         yy = py + 24
-        if self.mode == "overview":
+        if self.mode == "preview":
+            sx, sz, r = self.sim.orbital_pos()
             stats = [
-                f"Mode: OVERVIEW",
+                f"Mode: PREVIEW (animated)",
                 f"System: {self.current_system.name}",
+                f"Phase: {self.sim.phase_name()}",
                 "",
                 f"BH mass: {BH_MASS_KG/M_SUN:.2f} M_sun",
                 f"Rs: {BH_RS/1000:.2f} km" if BH_RS >= 1000 else f"Rs: {BH_RS:.3e} m",
-                f"EP: {ORBIT_EP_AU:.2f} AU",
+                f"EP: {ORBIT_EP_AU:.4f} AU",
                 f"AP: {ORBIT_AP_AU:.2f} AU",
-                f"Ecc: {ORBIT_E:.3f}",
+                f"Ecc: {ORBIT_E:.4f}",
                 f"Period: {ORBIT_PERIOD_YR:.1f} yr",
                 "",
-                f"Sphere: {SPHERE_MASS_KG:.1e} kg",
-                f"  R: {SPHERE_RADIUS_M:.0f} m",
-                f"  RPM: {SPHERE_RPM_TARGET:.0f}",
-                f"Energy: {SPHERE_E_PWH/3.6e18:.2f} PWh",
-                f"Spheres: {N_SPHERES}",
+                f"Orbit pos: {r/AU_M:.3f} AU",
+                f"Sphere RPM: {self.sim.rpm:.0f} / {SPHERE_RPM_TARGET:.0f}",
+                f"Energy: {self.sim.energy_j/3.6e18:.3f} PWh",
+                f"String ext: {self.sim.string_ext*100:.0f}%",
                 "",
+                f"Spheres: {N_SPHERES}",
                 f"Depletion: {DEPLETE_YEARS:.1e} yr",
                 f"Distance: {BH_DIST_LY:.0f} ly",
                 "",
-                "Click parts to inspect",
-                "TAB to simulate | I for info",
+                f"EP/ISCO: {self._fmt_x(ORBIT_EP_M/BH_RISCO)} (clears BH)",
+                "TAB: MODEL inspector / SIMULATE",
+                "Click parts | I for info",
             ]
         else:
             stats = [
@@ -3520,9 +3710,9 @@ class App:
             v = self.sim.orbital_vel()
             yy = ly + 24
             ostats = [
-                f"EP: {ORBIT_EP_AU:.2f} AU",
+                f"EP: {ORBIT_EP_AU:.4f} AU",
                 f"AP: {ORBIT_AP_AU:.2f} AU",
-                f"Eccentricity: {ORBIT_E:.3f}",
+                f"Eccentricity: {ORBIT_E:.4f}",
                 f"Current r: {r/AU_M:.3f} AU",
                 f"Current v: {v/1000:.2f} km/s",
                 f"Gravity at r: {gravity_at_distance(r):.2e} m/s^2",
@@ -3649,6 +3839,132 @@ class App:
         # Bottom bar: controls
         _panel(surf, 0, self.H - 28, self.W, 28, alpha=200)
         controls = "TAB cycle modes | 1-5 select system | S systems | C custom | mouse orbit/zoom/pan | R reset | L labels | E explode | X section | P pause | SPACE phase/reset | +/- speed | I info | H help | ESC quit"
+        surf.blit(_render_text(self.fsmall, controls, C_DIM), (12, self.H - 22))
+
+    @staticmethod
+    def _fmt_x(v):
+        """Format a large multiplier compactly (avoids 20-digit overflow)."""
+        if not math.isfinite(v):
+            return "--"
+        if v >= 1e6 or (0 < v < 0.01):
+            return f"{v:.1e}x"
+        return f"{v:,.0f}x"
+
+    @staticmethod
+    def _fmt_len(m):
+        """Format a length in the cleanest of km / m / scientific."""
+        if not math.isfinite(m):
+            return "--"
+        if m >= 1e3:
+            return f"{m/1e3:,.1f} km"
+        if m >= 1.0:
+            return f"{m:.2f} m"
+        return f"{m:.2e} m"
+
+    def _nice_scale_bar(self, meters_per_px):
+        """Pick a round real-world length for a ~150px scale bar, rounded within
+        whichever unit (AU/km/m/cm) reads cleanest."""
+        target = 150.0 * meters_per_px
+        if target <= 0 or not math.isfinite(target):
+            return 100, "--"
+        # choose display unit from the target magnitude
+        if target >= 0.1 * AU_M:
+            unit_m, unit = AU_M, "AU"
+        elif target >= 1000.0:
+            unit_m, unit = 1000.0, "km"
+        elif target >= 1.0:
+            unit_m, unit = 1.0, "m"
+        else:
+            unit_m, unit = 0.01, "cm"
+        val = target / unit_m               # target length in chosen unit
+        exp = math.floor(math.log10(val))
+        base = val / (10 ** exp)
+        nice = 1.0 if base < 2 else (2.0 if base < 5 else 5.0)
+        val_nice = nice * (10 ** exp)
+        length_m = val_nice * unit_m
+        px = max(20, min(400, int(length_m / meters_per_px)))
+        lbl = f"{val_nice:g} {unit}"
+        return px, lbl
+
+    def _draw_model_hud(self):
+        surf = self.screen
+        _panel(surf, 0, 0, self.W, 32, alpha=200)
+        pygame.draw.rect(surf, self.current_system.color_accent, (0, 0, self.W, 3))
+        tgt = self.model_targets[self.model_focus]
+        tname = self.model_target_names[tgt]
+        title = f"BHH - {self.current_system.name}  |  MODEL (to scale)  |  {tname}"
+        surf.blit(_render_text(self.font, title, self.current_system.color_accent), (12, 8))
+
+        # Sub-header: focus navigator
+        legend_y = 40
+        _panel(surf, self.W // 2 - 300, legend_y, 600, 28, alpha=200)
+        nav = "  ".join(
+            (f"[{self.model_target_names[t]}]" if i == self.model_focus else self.model_target_names[t])
+            for i, t in enumerate(self.model_targets))
+        ls = _render_text(self.fsmall, "[ / ] cycle:  " + nav, C_DIM)
+        surf.blit(ls, (self.W // 2 - ls.get_width() // 2, legend_y + 8))
+
+        # Right panel: component real specs / system clearance proof
+        pw = 396
+        px = self.W - pw - 10
+        py = 40
+        _panel(surf, px, py, pw, 452, alpha=220)
+        pygame.draw.rect(surf, self.current_system.color_accent, (px, py, pw, 3))
+        if tgt == "system":
+            header = "TO-SCALE SYSTEM"
+            specs = [
+                "Orbit rendered 1 AU = 1 unit.",
+                "Bodies enlarged for visibility;",
+                "black hole capped so the path",
+                "clearly CLEARS it (see below).",
+                "",
+                f"EP (periastron): {ORBIT_EP_AU:.4f} AU",
+                f"AP (apastron):   {ORBIT_AP_AU:.2f} AU",
+                f"Eccentricity:    {ORBIT_E:.4f}",
+                f"Semi-major axis: {ORBIT_A_M/AU_M:.2f} AU",
+                f"Period:          {ORBIT_PERIOD_YR:.2f} yr",
+                "",
+                f"Schwarzschild r: {self._fmt_len(BH_RS)}",
+                f"ISCO (3 r_s):    {self._fmt_len(BH_RISCO)}",
+                f"EP / ISCO:       {self._fmt_x(ORBIT_EP_M/BH_RISCO)}",
+                f"EP / r_s:        {self._fmt_x(ORBIT_EP_M/BH_RS)}",
+                "-> orbit clears BH with wide margin",
+                "",
+                f"v at EP: {ORBIT_V_EP/1000:.1f} km/s",
+                f"v at AP: {ORBIT_V_AP/1000:.1f} km/s",
+            ]
+        else:
+            parts = self._active_parts()
+            part = parts[0] if parts else None
+            header = part.name if part else tname
+            specs = list(part.specs) if (part and part.specs) else []
+        surf.blit(_render_text(self.fsmall, header, C_GOOD), (px + 8, py + 6))
+        yy = py + 24
+        for s in specs[:26]:
+            col = C_ACCENT if s.startswith("->") else C_TEXT
+            if s == "":
+                yy += 6
+            else:
+                surf.blit(_render_text(self.fsmall, s, col), (px + 8, yy))
+                yy += 15
+
+        # Scale bar (bottom-left) giving the true real-world size on screen
+        focal = min(self.W, self.H) * 1.05
+        dist = max(self.renderer.dist, 1e-9)
+        mpu = self._model_real_mpu.get(tgt, AU_M)
+        meters_per_px = (dist / focal) * mpu
+        bar_px, bar_lbl = self._nice_scale_bar(meters_per_px)
+        bx, by = 20, self.H - 70
+        _panel(surf, bx - 8, by - 22, bar_px + 90, 42, alpha=200)
+        surf.blit(_render_text(self.fsmall, "SCALE", C_DIM), (bx, by - 18))
+        pygame.draw.line(surf, C_TEXT, (bx, by), (bx + bar_px, by), 2)
+        pygame.draw.line(surf, C_TEXT, (bx, by - 4), (bx, by + 4), 2)
+        pygame.draw.line(surf, C_TEXT, (bx + bar_px, by - 4), (bx + bar_px, by + 4), 2)
+        surf.blit(_render_text(self.fsmall, bar_lbl, C_TEXT), (bx + bar_px + 8, by - 7))
+
+        # Bottom bar: controls
+        _panel(surf, 0, self.H - 28, self.W, 28, alpha=200)
+        controls = "TAB cycle modes | [ / ] focus component | 1-5 system | mouse orbit/zoom/pan | R reframe | E explode | X section | I info | H help | ESC quit"
         surf.blit(_render_text(self.fsmall, controls, C_DIM), (12, self.H - 22))
 
     def _draw_phase_bar(self, surf):
@@ -4316,7 +4632,10 @@ class App:
             s.blit(_render_text(self.fmed, "CONTROLS", C_ACCENT), (20, 16))
             pygame.draw.line(s, (60, 80, 110), (20, 44), (w-20, 44), 1)
             helps = [
-                ("TAB", "Cycle: OVERVIEW -> SIMULATE -> DEPLETION -> SYSTEMS -> CUSTOM"),
+                ("TAB", "Cycle: PREVIEW -> MODEL -> SIMULATE -> DEPLETION -> SYSTEMS -> CUSTOM"),
+                ("PREVIEW", "Whole system, orbit to scale, animated (path clears BH)"),
+                ("MODEL", "To-scale inspector: [ / ] focus BH/sphere/station/string/system"),
+                ("[ / ]", "MODEL mode: cycle focused component"),
                 ("S", "Systems selection screen"),
                 ("C", "Custom system builder"),
                 ("1-5", "Quick-select preset system"),
@@ -4399,7 +4718,8 @@ class App:
             "\n   Depletion: Hawking radiation, jets, Doppler disk, explosion + wormhole" +
             "\n" +
             "\n Now supports 5 preset systems + custom builds!" +
-            "\n TAB  :  OVERVIEW -> SIMULATE -> DEPLETION -> SYSTEMS -> CUSTOM" +
+            "\n TAB  :  PREVIEW -> MODEL -> SIMULATE -> DEPLETION -> SYSTEMS -> CUSTOM" +
+            "\n MODEL:  to-scale inspector; [ / ] focus BH / sphere / station / string / system" +
             "\n 1-5  :  Quick-select preset system (Gaia BH1, Cygnus X-1, Sgr A*, etc.)" +
             "\n S    :  Systems selection screen   C: Custom system builder" +
             "\n Mouse:  orbit / zoom / pan   R: reset   L: labels   E: explode" +
