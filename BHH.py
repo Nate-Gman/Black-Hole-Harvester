@@ -10,33 +10,41 @@ Black Hole Energy Harvester (BHH) system in real time, mechanically, to scale,
 in a single Python file — built on the same pure-Python software renderer
 architecture as GmansRunV1.17.py, SE.py, and flysuit.py.
 
-THE SYSTEM (from goal.md):
-  A massive spinning sphere orbits Gaia BH1 in a highly eccentric ellipse.
-  At periastron (EP), a string is unreeled into the tidal gravity gradient,
-  driving a pull-to-rotation system that spins the sphere up to ~228 RPM,
-  storing 1 PWh (3.6e18 J) of rotational kinetic energy. The sphere coasts
-  out to apastron (AP) where a space station harvests the spin via magnetic
-  inductive coupling, reducing rotation to 0 RPM. A gravity laser corrects
-  orbital drift. The cycle repeats every 3 years.
+THE SYSTEM (scaled to reality; concept from goal.md):
+  A graphene flywheel sphere orbits Gaia BH1 -- Earth's NEAREST black hole -- in
+  a CLOSE-periastron, HIGH-ECCENTRICITY, SHORT-period ellipse. "Close" means the
+  periastron (EP) sits a real, buildable distance above the hole (r_s multiples,
+  not AU); it does NOT mean low eccentricity. At EP a short string is unreeled
+  into the tidal gravity gradient, spinning the sphere to ~95% of its structural
+  RPM limit and storing the rotational energy the tides can actually deliver
+  (~160 GWh, not a made-up 1 PWh). The sphere then coasts far out to a distant,
+  nearly-stationary apastron (AP, ~200x farther than EP) where a fixed, non-
+  orbiting station harvests the spin via magnetic induction, back to 0 RPM. The
+  harvest removes real orbital energy, so the orbit measurably decays each cycle;
+  a gravity laser puts exactly that energy back (net BH energy gain ~ 0 -- this
+  is a tidal orbital-energy flywheel, not free energy).
 
-  BLACK HOLE      Gaia BH1, ~9.62 solar masses, Schwarzschild metric
-  SPHERE          2.77e11 kg, R~321 m, graphene composite
-                  (rho~2000 kg/m3, sigma~130 GPa), stores 1 PWh at ~228 RPM
-  ORBIT           EP=0.014 AU, AP=8.83 AU, e~0.997, T=3 yr
-  STRING          Graphene composite, 1.5 m dia, tip mass 3.50e10 kg
+  BLACK HOLE      Gaia BH1, ~9.62 solar masses, Schwarzschild metric (r_s~28 km)
+  SPHERE          5.0e7 kg (~50,000 t), R~18 m, graphene (rho~2000, sigma~130 GPa)
+                  spins to ~4030 RPM (5% below burst), stores ~163 GWh
+  ORBIT           EP~1500 r_s (~42,600 km), AP~8.48M km (~200x EP), e~0.99,
+                  T~13.6 hr -- close violent pass, distant near-stationary AP
+  STRING          Graphene, 50 cm dia, ~99 km long, osmium tip ~3.9e6 kg
+                  (never reaches the horizon; reeled back in and reused)
   PULL-TO-ROT     4-stage planetary gears (625:1), constant-tension clutch,
                   electromagnetic disengagement, rotary swivel, ratchet freewheel
-  STATION         Circular orbit at AP, gyroscopic flywheel station-keeping,
+  STATION         FIXED (non-orbiting) at AP, gyroscopic flywheel station-keeping,
                   superconducting coil array for inductive harvesting
-  GRAVITY LASER   Orbital correction near EP and at AP
-  HARVESTING      Halbach array (NdFeB, ~2 T) -> inductive coupling -> 135 GW
+  GRAVITY LASER   Restores the per-cycle orbital decay
+  HARVESTING      Halbach array (NdFeB, ~2 T) -> inductive coupling
   CONSTELLATION   1095 spheres, one harvest per day
 
 Modes (cycle with TAB):
   1. PREVIEW    Whole-system map: black hole, orbit path, sphere, string,
-                station, gravity laser. Orbit is to scale (1 AU = 1 unit) and
-                the black hole is capped so the eccentric path clearly CLEARS
-                it (bodies are enlarged for legibility).
+                station, gravity laser. Orbit is to scale (1 apastron = 1 unit,
+                normalised per-system so close-in and AU-scale orbits both frame
+                correctly) and the black hole is capped so the eccentric path
+                clearly CLEARS it (bodies are enlarged for legibility).
   2. MODEL      To-scale digital-twin inspector. [ / ] cycle the focused
                 component -- black hole, energy sphere, station, string, or the
                 whole system -- each framed at a comfortable size with its real
@@ -58,6 +66,7 @@ import math
 import os
 import sys
 import warnings
+from contextlib import contextmanager
 from operator import itemgetter
 
 warnings.filterwarnings("ignore")
@@ -95,40 +104,64 @@ BH_RPH         = 1.5 * BH_RS               # photon sphere
 BH_RISCO       = 3.0 * BH_RS               # innermost stable circular orbit
 BH_DIST_LY     = 1560.0                    # distance from Earth
 
-# -- Sphere: graphene composite --
-SPHERE_MASS_KG    = 2.77e11
+# -- Sphere: graphene composite (SCALED TO REALITY: a ~50,000 t flywheel) --
+# The old 2.77e11 kg / 321 m / 1 PWh sphere was sized to hit an arbitrary energy
+# target; here the sphere is a buildable graphene flywheel and its stored energy
+# is whatever the tidal reel can physically deliver (~180 GWh capacity).
+SPHERE_MASS_KG    = 5.0e7                   # 50,000 tonnes (was 2.77e11 -> unreal)
 SPHERE_DENSITY    = 2000.0                 # kg/m^3
-SPHERE_RADIUS_M   = (3.0 * SPHERE_MASS_KG / (4.0 * PI * SPHERE_DENSITY)) ** (1.0/3.0)  # ~321 m
+SPHERE_RADIUS_M   = (3.0 * SPHERE_MASS_KG / (4.0 * PI * SPHERE_DENSITY)) ** (1.0/3.0)  # ~18 m
 SPHERE_TENSILE_PA = 1.30e11                # 130 GPa (graphene, measured tensile strength)
-SPHERE_RPM_MAX    = 235.0                  # max RPM before structural failure
-SPHERE_RPM_TARGET = 223.0                  # 5% below max
-SPHERE_OMEGA_MAX  = SPHERE_RPM_MAX * 2.0 * PI / 60.0
+# Structural spin limit: equatorial hoop stress rho*w^2*R^2 = sigma -> w = V_mat/R.
+V_MAT_SPHERE      = math.sqrt(SPHERE_TENSILE_PA / SPHERE_DENSITY)   # ~8060 m/s
+SPHERE_OMEGA_MAX  = V_MAT_SPHERE / SPHERE_RADIUS_M
+SPHERE_RPM_MAX    = SPHERE_OMEGA_MAX * 60.0 / (2.0 * PI)   # ~4240 RPM (derived, not guessed)
+SPHERE_RPM_TARGET = 0.95 * SPHERE_RPM_MAX  # 5% below structural max
 SPHERE_OMEGA_TGT  = SPHERE_RPM_TARGET * 2.0 * PI / 60.0
-SPHERE_I          = 0.4 * SPHERE_MASS_KG * SPHERE_RADIUS_M**2   # moment of inertia (solid sphere)
-SPHERE_E_PWH      = 0.5 * SPHERE_I * SPHERE_OMEGA_MAX**2   # energy at max RPM (~1 PWh)
+SPHERE_I          = 0.4 * SPHERE_MASS_KG * SPHERE_RADIUS_M**2   # solid sphere
+SPHERE_E_MAX      = 0.5 * SPHERE_I * SPHERE_OMEGA_MAX**2   # capacity at max RPM (~180 GWh)
+SPHERE_E_OPER     = 0.5 * SPHERE_I * SPHERE_OMEGA_TGT**2   # stored at target RPM (~163 GWh)
+SPHERE_E_PWH      = SPHERE_E_MAX           # kept name for compatibility (now ~5e-5 PWh)
 
-# -- Orbit --
-ORBIT_EP_AU    = 0.014                     # periastron (close approach for tidal gradient)
-ORBIT_AP_AU    = 8.83                      # apastron (station position, safe distance)
-ORBIT_EP_M     = ORBIT_EP_AU * AU_M
-ORBIT_AP_M     = ORBIT_AP_AU * AU_M
+# -- Orbit: CLOSE (real EP) + high-e (far, near-stationary AP) + SHORT period --
+# Was EP=0.014 AU / e=0.997 / 3 yr: an AU-scale razor sliver -- the whole system,
+# station included, was light-hours across. "Close" means the PERIASTRON sits a
+# real, buildable distance above the hole (r_s multiples, not AU); it does NOT
+# mean low eccentricity. The station still needs to be genuinely far away and
+# nearly at rest (goal.md: "does not orbit, maintains position") so the sphere
+# makes a violent close pass at EP, then coasts way out to a slow, high AP where
+# harvesting happens safely. So EP stays close (1500 r_s) but e stays HIGH
+# (0.99) -- the fix versus the previous pass is shrinking the ABSOLUTE scale
+# (km, not AU) while keeping the eccentric SHAPE, so the period drops from
+# 3 years to ~14 hours instead of collapsing EP and AP together.
+ORBIT_EP_M     = 1500.0 * BH_RS            # periastron ~1500 r_s (~42,600 km)
+ORBIT_E        = 0.99                       # high-e: AP ~200x farther than EP
+ORBIT_AP_M     = ORBIT_EP_M * (1.0 + ORBIT_E) / (1.0 - ORBIT_E)
+ORBIT_EP_AU    = ORBIT_EP_M / AU_M
+ORBIT_AP_AU    = ORBIT_AP_M / AU_M
 ORBIT_A_M      = 0.5 * (ORBIT_EP_M + ORBIT_AP_M)     # semi-major axis
-ORBIT_E        = (ORBIT_AP_M - ORBIT_EP_M) / (ORBIT_AP_M + ORBIT_EP_M)  # eccentricity
 ORBIT_B_M      = ORBIT_A_M * math.sqrt(1.0 - ORBIT_E**2)   # semi-minor axis
 ORBIT_PERIOD_S = 2.0 * PI * math.sqrt(ORBIT_A_M**3 / (G * BH_MASS_KG))
 ORBIT_PERIOD_YR = ORBIT_PERIOD_S / (365.25 * 86400.0)
 ORBIT_V_EP     = math.sqrt(G * BH_MASS_KG * (2.0/ORBIT_EP_M - 1.0/ORBIT_A_M))
 ORBIT_V_AP     = math.sqrt(G * BH_MASS_KG * (2.0/ORBIT_AP_M - 1.0/ORBIT_A_M))
 
-# -- String: carbon graphene hybrid --
-STRING_DIAM_M    = 1.50                    # 1.5 m cable (graphene-reinforced composite)
+# -- String: honest tidal reel. Fixed buildable diameter -> derive length + tip --
+# Energy is delivered by unreeling length L under a tidal tension that ramps
+# 0 -> T_cap:  E_oper/eta = 1/2 * T_cap * L. The tip mass is whatever develops
+# T_cap in the tidal gradient at periastron. No 15,000 km / constant-T fiction.
+STRING_DIAM_M    = 0.50                    # 50 cm cable (was 1.5 m)
 STRING_R_M       = STRING_DIAM_M / 2.0
-STRING_TENSILE   = 1.30e11                 # 130 GPa (graphene, measured tensile strength)
+STRING_TENSILE   = 1.30e11                 # 130 GPa
 STRING_DENSITY   = 2000.0                  # kg/m^3
-STRING_T_MAX     = STRING_TENSILE * PI * STRING_R_M**2   # max tension ~2.30e11 N
-STRING_LENGTH_M  = SPHERE_E_PWH / STRING_T_MAX           # ~1.57e7 m with constant tension
+STRING_T_MAX     = STRING_TENSILE * PI * STRING_R_M**2   # snap limit
+STRING_SF        = 2.0                      # working tension = T_max / safety factor
+STRING_ETA       = 0.93                     # pull-to-rotation efficiency
+_T_CAP           = STRING_T_MAX / STRING_SF
+STRING_LENGTH_M  = min(2.0 * SPHERE_E_OPER / (STRING_ETA * _T_CAP), 0.2 * ORBIT_EP_M)  # ~90 km
 STRING_LENGTH_MI = STRING_LENGTH_M / 1609.344
-STRING_TIP_MASS  = 3.50e10                 # tip mass (kg, reduced for tidal force safety)
+_GRAD_EP         = 1.0/(ORBIT_EP_M - STRING_LENGTH_M)**2 - 1.0/ORBIT_EP_M**2
+STRING_TIP_MASS  = min(_T_CAP / (G * BH_MASS_KG * _GRAD_EP), SPHERE_MASS_KG)  # ~4e6 kg
 STRING_TIP_R_M   = (3.0 * STRING_TIP_MASS / (4.0 * PI * 22590.0))**(1.0/3.0)  # osmium density
 
 # -- Pull-to-rotation system --
@@ -154,8 +187,19 @@ STATION_EFFICIENCY = 0.95                   # 95% energy capture efficiency
 HARVEST_ENERGY_J  = SPHERE_E_PWH * STATION_EFFICIENCY   # 3.42e18 J per harvest
 HARVEST_POWER_W   = STATION_POWER_GW * 1e9              # 135 GW harvest rate during AP flyby
 
-# -- Orbital correction --
-EP_DRIFT_KM       = 0.0001                 # EP reduction per cycle (km, goal.md spec)
+# -- Orbital correction (HONEST per-cycle decay from energy conservation) --
+# Removing the operating spin energy at periastron with a purely radial string is
+# torque-free, so the semi-latus rectum p = a(1-e^2) is conserved while the
+# orbital energy drops: a and e shrink, the apastron falls. The laser must put
+# exactly this energy back each cycle (net BH energy gain ~ 0 for a Schwarzschild
+# hole -- this is a tidal orbital-energy flywheel, not free energy).
+_E_ORB1           = -G * BH_MASS_KG * SPHERE_MASS_KG / (2.0 * ORBIT_A_M) - SPHERE_E_OPER
+_A_ORB1           = -G * BH_MASS_KG * SPHERE_MASS_KG / (2.0 * _E_ORB1)
+_P_ORB            = ORBIT_A_M * (1.0 - ORBIT_E**2)
+_E_ORB1_ECC       = math.sqrt(max(0.0, 1.0 - _P_ORB / _A_ORB1))
+ORBIT_DECAY_AP_KM = (ORBIT_AP_M - _A_ORB1 * (1.0 + _E_ORB1_ECC)) / 1000.0
+EP_DRIFT_KM       = abs(ORBIT_DECAY_AP_KM)  # per-cycle AP decay (~0.2 km), laser-corrected
+CORRECTION_DV     = SPHERE_E_OPER / (SPHERE_MASS_KG * ORBIT_V_AP)  # laser dv at AP (m/s)
 LASER_POWER_GW    = 10.0                   # gravity laser power (goal.md spec)
 LASER_FORCE_N     = 1.0e4                  # correction force (goal.md spec)
 
@@ -170,34 +214,49 @@ HALBACH_FREQ_HZ   = SPHERE_RPM_TARGET / 60.0  # rotating field frequency (~3.8 H
 
 # -- Constellation --
 N_SPHERES         = 1095
+SIM_SPHERES       = 6                     # visible spheres orbiting in sequence
+HARVESTS_TO_CRITICAL = 100                 # BH goes critical after this many harvest cycles
 HARVEST_INTERVAL_D = 1                     # one per day
 MASS_PER_HARVEST   = SPHERE_E_PWH / C**2   # E=mc^2 equivalent mass (40 kg)
 HARVESTS_TO_DEPLETE = int(BH_MASS_KG / MASS_PER_HARVEST)
 DEPLETE_YEARS      = HARVESTS_TO_DEPLETE / 365.25
 HOMES_POWERED     = int(N_SPHERES * SPHERE_E_PWH / 3.6e10)  # annual energy / 10,000 kWh per home
 
-# -- Derived energy values --
-SPHERE_E_MAX      = 0.5 * SPHERE_I * SPHERE_OMEGA_MAX**2   # max energy at 240 RPM = 1 PWh
-SPHERE_E_OPER     = 0.5 * SPHERE_I * SPHERE_OMEGA_TGT**2    # operating energy at 228 RPM ~0.90 PWh
+# (SPHERE_E_MAX / SPHERE_E_OPER are defined in the sphere block above.)
 
 # -- Display scaling --
-DS = 1.0 / AU_M   # display scale: 1 AU = 1.0 model units
+# DS normalises to the CURRENT orbit's own apastron (1 AP = 1.0 model units), not
+# a fixed AU. A fixed 1-AU=1-unit scale only works when every system's orbit
+# happens to be AU-sized; once EP/AP are r_s-scale (km, not AU) that assumption
+# silently collapses the whole scene into the SCENE_R floor -- BH, orbit, sphere
+# and station all bunch up at the origin regardless of their real separation.
+# Normalising to AP makes framing scale-invariant: any system, from a metre-scale
+# toy to an AU-scale giant, always fills the same frame.
+DS = 1.0 / ORBIT_AP_M   # display scale: 1 apastron = 1.0 model units
 
 # -- Scene scale: all components sized relative to orbit for visibility --
-# The orbit is rendered to scale (1 AU = 1 unit). Real bodies (BH ~28 km, sphere
-# ~321 m, station ~km) are ~1e8x smaller than the orbit (AU-scale), so they are
-# enlarged for visibility. CRITICAL: the black hole is *capped* so its accretion
-# disk (which reaches ~DISK_OUTER_MULT x the event-horizon display radius) stays
-# well inside periastron -- this guarantees the orbit path clearly CLEARS the
-# black hole instead of plunging into it (see build_black_hole / build_orbit).
+# The orbit is rendered to scale (AP = 1 unit). Real bodies (BH ~28 km, sphere
+# ~18 m, station ~km) are far smaller than the orbit, so they are enlarged for
+# visibility. CRITICAL: the black hole is *capped* so its accretion disk (which
+# reaches ~DISK_OUTER_MULT x the event-horizon display radius) stays well inside
+# periastron -- this guarantees the orbit path clearly CLEARS the black hole
+# instead of plunging into it (see build_black_hole / build_orbit).
 DISK_OUTER_MULT = 4.5              # accretion disk outer edge = this x BH_DISP_R
 BH_CLEAR_FRAC   = 0.40            # BH complex may fill at most 40% of periastron
-ORBIT_MAX_DS = max(ORBIT_EP_M, ORBIT_AP_M) * DS   # largest orbit radius in display units
+ORBIT_MAX_DS = max(ORBIT_EP_M, ORBIT_AP_M) * DS   # largest orbit radius in display units (== 1.0)
 ORBIT_EP_DS  = ORBIT_EP_M * DS                     # periastron radius in display units
 SCENE_R = max(ORBIT_MAX_DS, 0.1)                    # scene radius for scaling
 # Physically-honest black-hole size: never larger than the periastron-clearance cap.
 BH_DISP_R = min(SCENE_R * 0.04, ORBIT_EP_DS * BH_CLEAR_FRAC / DISK_OUTER_MULT)
-SPHERE_DISP_R = SCENE_R * 0.015                    # sphere visible at 1.5% of orbit
+# The sphere is REAL SIZE ~18 m vs the BH's ~28,000 m Schwarzschild radius --
+# the BH is ~1600x bigger. BH_DISP_R is deliberately capped small (above) to
+# prove orbit clearance; if the sphere kept its own independent SCENE_R-based
+# size (as before), it would render *larger than the black hole itself* right
+# next to it -- an inverted, dishonest scale relationship, not just "enlarged
+# for legibility". Cap the sphere (and everything attached to it: string, tip
+# mass) relative to BH_DISP_R so it always reads as smaller than the BH, same
+# direction as reality, even though neither is remotely to true scale.
+SPHERE_DISP_R = min(SCENE_R * 0.015, BH_DISP_R * 0.6)
 STATION_DISP_S = SCENE_R * 0.025                   # station size at 2.5% of orbit
 STRING_DISP_SCALE = SCENE_R * 0.08 / max(STRING_LENGTH_M * DS, 1e-12)  # string visible
 CAMERA_HOME_DIST = SCENE_R * 1.5                    # camera distance to fit orbit
@@ -210,6 +269,26 @@ CURRENT_SYSTEM_NAME = "Gaia BH1"
 # SECTION 1b -- SYSTEM CONFIGURATIONS (multi-system support)
 # =============================================================================
 
+def fmt_time(seconds):
+    """Human-readable duration across the huge range of orbital periods."""
+    s = abs(seconds)
+    if s < 90:            return f"{s:.0f} s"
+    if s < 5400:          return f"{s/60:.1f} min"
+    if s < 172800:        return f"{s/3600:.1f} hr"
+    if s < 3.156e7:       return f"{s/86400:.1f} days"
+    return f"{s/3.156e7:.2f} yr"
+
+
+def fmt_energy(j):
+    """Adaptive energy units (the honest per-harvest energy is GWh-scale, not PWh)."""
+    if j >= 3.6e18:  return f"{j/3.6e18:.2f} PWh"
+    if j >= 3.6e15:  return f"{j/3.6e15:.2f} TWh"
+    if j >= 3.6e12:  return f"{j/3.6e12:.1f} GWh"
+    if j >= 3.6e9:   return f"{j/3.6e9:.1f} MWh"
+    if j > 0:        return f"{j/3.6e6:.1f} kWh"
+    return "0"
+
+
 class SystemConfig:
     """Configuration for a BH harvesting system. Encapsulates all physical
     parameters so multiple systems at different scales can coexist."""
@@ -218,10 +297,11 @@ class SystemConfig:
                  bh_mass_msun, bh_dist_ly,
                  orbit_ep_au, orbit_ap_au,
                  sphere_mass_kg, sphere_density,
-                 sphere_rpm_max, sphere_rpm_target,
-                 string_diam_m, string_tip_mass_kg,
+                 string_diam_m,
                  n_spheres, station_mass_kg,
                  color_bh=(40, 0, 60), color_accent=(0, 200, 255)):
+        # NOTE: sphere RPM (structural limit) and string length + tip mass are now
+        # DERIVED from physics below, not hand-specified -- see the honest model.
         self.name = name
         self.desc = desc
         self.bh_mass_msun = bh_mass_msun
@@ -230,10 +310,7 @@ class SystemConfig:
         self.orbit_ap_au = orbit_ap_au
         self.sphere_mass_kg = sphere_mass_kg
         self.sphere_density = sphere_density
-        self.sphere_rpm_max = sphere_rpm_max
-        self.sphere_rpm_target = sphere_rpm_target
         self.string_diam_m = string_diam_m
-        self.string_tip_mass_kg = string_tip_mass_kg
         self.n_spheres = n_spheres
         self.station_mass_kg = station_mass_kg
         self.color_bh = color_bh
@@ -255,23 +332,53 @@ class SystemConfig:
         self.orbit_v_ap = math.sqrt(G * self.bh_mass_kg * (2.0/self.orbit_ap_m - 1.0/self.orbit_a_m))
 
         self.sphere_radius_m = (3.0 * sphere_mass_kg / (4.0 * PI * sphere_density)) ** (1.0/3.0)
-        self.sphere_omega_max = sphere_rpm_max * 2.0 * PI / 60.0
-        self.sphere_omega_tgt = sphere_rpm_target * 2.0 * PI / 60.0
+        # Structural spin limit (flywheel burst): equatorial hoop stress = sigma.
+        v_mat = math.sqrt(1.30e11 / sphere_density)
+        self.sphere_omega_max = v_mat / self.sphere_radius_m
+        self.sphere_rpm_max = self.sphere_omega_max * 60.0 / (2.0 * PI)
+        self.sphere_rpm_target = 0.95 * self.sphere_rpm_max
+        self.sphere_omega_tgt = self.sphere_rpm_target * 2.0 * PI / 60.0
         self.sphere_i = 0.4 * sphere_mass_kg * self.sphere_radius_m**2
         self.sphere_e_max = 0.5 * self.sphere_i * self.sphere_omega_max**2
         self.sphere_e_oper = 0.5 * self.sphere_i * self.sphere_omega_tgt**2
-        self.sphere_e_pwh = self.sphere_e_max  # energy at max RPM (sphere spins to max at EP)
+        self.sphere_e_pwh = self.sphere_e_max  # capacity at max RPM (name kept)
 
+        # Honest tidal reel: fixed buildable diameter -> derive length + tip mass.
+        # E_oper/eta = 1/2 * T_cap * L, with T_cap = sigma*A / safety_factor, and
+        # the tip sized to develop T_cap in the tidal gradient at periastron.
+        eta, sf_string = 0.93, 2.0
         self.string_r_m = string_diam_m / 2.0
-        self.string_t_max = 1.30e11 * PI * self.string_r_m**2
-        self.string_length_m = self.sphere_e_pwh / self.string_t_max
-        self.string_tip_r_m = (3.0 * string_tip_mass_kg / (4.0 * PI * 22590.0))**(1.0/3.0)
+        area = PI * self.string_r_m**2
+        self.string_t_max = 1.30e11 * area                 # snap limit
+        t_cap = self.string_t_max / sf_string              # working tension
+        L = 2.0 * self.sphere_e_oper / (eta * t_cap)
+        self.string_length_m = min(L, 0.2 * self.orbit_ep_m)  # never span the orbit
+        L = self.string_length_m
+        grad = 1.0/(self.orbit_ep_m - L)**2 - 1.0/self.orbit_ep_m**2
+        tip = t_cap / (G * self.bh_mass_kg * grad) if grad > 0 else sphere_mass_kg
+        self.string_tip_mass_kg = min(tip, sphere_mass_kg)    # tip never > sphere
+        self.string_tip_r_m = (3.0 * self.string_tip_mass_kg / (4.0 * PI * 22590.0))**(1.0/3.0)
+
+        # Honest per-cycle orbital decay: remove sphere_e_oper at periastron with a
+        # radial (torque-free) string -> p = a(1-e^2) conserved, energy drops.
+        e_binding = G * self.bh_mass_kg * sphere_mass_kg / (2.0 * self.orbit_a_m)
+        if self.sphere_e_oper < e_binding:
+            e_orb1 = -e_binding - self.sphere_e_oper
+            a1 = -G * self.bh_mass_kg * sphere_mass_kg / (2.0 * e_orb1)
+            p_orb = self.orbit_a_m * (1.0 - self.orbit_e**2)
+            e1 = math.sqrt(max(0.0, 1.0 - p_orb / a1))
+            self.orbit_decay_ap_km = (self.orbit_ap_m - a1 * (1.0 + e1)) / 1000.0
+            self.correction_dv = self.sphere_e_oper / (sphere_mass_kg * self.orbit_v_ap)
+        else:
+            # Non-viable: one harvest would unbind the orbit (toy/SMBH cases only).
+            self.orbit_decay_ap_km = self.orbit_ap_m / 1000.0
+            self.correction_dv = self.orbit_v_ap
 
         self.mass_per_harvest = self.sphere_e_pwh / C**2
         self.harvests_to_deplete = int(self.bh_mass_kg / self.mass_per_harvest) if self.mass_per_harvest > 0 else 0
         self.deplete_years = self.harvests_to_deplete / 365.25 if self.harvests_to_deplete > 0 else 0
 
-        self.ds = 1.0 / AU_M  # display scale
+        self.ds = 1.0 / self.orbit_ap_m  # display scale: 1 apastron = 1.0 model units
 
     def true_anomaly(self, t_frac):
         """True anomaly from time fraction for this system's orbit."""
@@ -309,66 +416,81 @@ class SystemConfig:
             f"Name: {self.name}",
             f"BH mass: {self.bh_mass_msun:.2f} M_sun ({self.bh_mass_kg:.3e} kg)",
             f"Schwarzschild R: {self.bh_rs/1000:.1f} km",
-            f"Orbit EP: {self.orbit_ep_au:.2f} AU, AP: {self.orbit_ap_au:.2f} AU",
+            f"Orbit EP: {self.orbit_ep_m/1000:.0f} km ({self.orbit_ep_m/self.bh_rs:.0f} r_s), "
+            f"AP: {self.orbit_ap_m/1000:.0f} km ({self.orbit_ap_m/self.orbit_ep_m:.0f}x EP)",
             f"Eccentricity: {self.orbit_e:.3f}",
-            f"Period: {self.orbit_period_yr:.1f} yr",
+            f"Period: {fmt_time(self.orbit_period_s)}",
             f"Sphere: {self.sphere_mass_kg:.2e} kg, R={self.sphere_radius_m:.0f} m",
             f"Sphere RPM: {self.sphere_rpm_target:.0f} (max {self.sphere_rpm_max:.0f})",
-            f"Energy/harvest: {self.sphere_e_pwh:.2e} J ({self.sphere_e_pwh/3.6e18:.2f} PWh)",
+            f"Energy/harvest: {self.sphere_e_oper:.2e} J ({self.sphere_e_oper/3.6e12:.1f} GWh)",
+            f"String: {self.string_diam_m*100:.0f} cm x {self.string_length_m/1000:.0f} km, "
+            f"tip {self.string_tip_mass_kg:.2e} kg",
+            f"AP decay/cycle: {self.orbit_decay_ap_km:.3f} km (laser dv {self.correction_dv:.2f} m/s)",
             f"Spheres: {self.n_spheres}, Rate: 1/day",
-            f"Depletion: {self.deplete_years:.2e} yr ({self.harvests_to_deplete:.2e} harvests)",
         ]
 
 
 # -- Preset system configurations --
+# All orbits are CLOSE (periastron a modest, buildable multiple of r_s, safely
+# above ISCO) + HIGH-e (AP ~200x farther than EP -- a genuinely distant, nearly-
+# stationary apastron for the station, per goal.md) + SHORT period (hours, not
+# years -- the absolute scale is r_s-multiples/km, not AU, so even a fat, highly
+# eccentric ellipse stays short). Sphere RPM (flywheel structural limit) and
+# string length + tip mass are DERIVED by physics, not hand-picked.
+# Note: tidal harvesting only closes physically for STELLAR-mass holes -- for the
+# supermassive presets the tidal field is far too weak, so the tip mass clamps at
+# the sphere mass (the string can't be fully loaded); they remain as scale demos.
+def _ep_au(bh_mass_msun, n_rs):
+    """Periastron in AU for a periastron of n_rs Schwarzschild radii."""
+    rs = 2.0 * G * (bh_mass_msun * M_SUN) / C**2
+    return n_rs * rs / AU_M
+
+def _ap_au(ep_au, e):
+    return ep_au * (1.0 + e) / (1.0 - e)
+
 PRESET_SYSTEMS = [
     SystemConfig(
-        "Gaia BH1", "Stellar-mass BH at 1560 ly - the reference design",
+        "Gaia BH1", "Nearest BH (1560 ly) - close EP, distant high-e AP, ~14 hr orbit",
         bh_mass_msun=9.62, bh_dist_ly=1560,
-        orbit_ep_au=0.014, orbit_ap_au=8.83,
-        sphere_mass_kg=2.77e11, sphere_density=2000.0,
-        sphere_rpm_max=235, sphere_rpm_target=223,
-        string_diam_m=1.50, string_tip_mass_kg=3.50e10,
+        orbit_ep_au=_ep_au(9.62, 1500), orbit_ap_au=_ap_au(_ep_au(9.62, 1500), 0.99),
+        sphere_mass_kg=5.0e7, sphere_density=2000.0,
+        string_diam_m=0.50,
         n_spheres=1095, station_mass_kg=1e9,
         color_bh=(40, 0, 60), color_accent=(0, 200, 255),
     ),
     SystemConfig(
-        "Cygnus X-1", "21.8 M_sun stellar BH at 7200 ly - high-energy system",
+        "Cygnus X-1", "21.8 M_sun stellar BH at 7200 ly - higher-mass close+high-e orbit",
         bh_mass_msun=21.8, bh_dist_ly=7200,
-        orbit_ep_au=0.022, orbit_ap_au=11.6,
-        sphere_mass_kg=5.5e11, sphere_density=2000.0,
-        sphere_rpm_max=180, sphere_rpm_target=165,
-        string_diam_m=1.80, string_tip_mass_kg=7.0e10,
+        orbit_ep_au=_ep_au(21.8, 1500), orbit_ap_au=_ap_au(_ep_au(21.8, 1500), 0.99),
+        sphere_mass_kg=8.0e7, sphere_density=2000.0,
+        string_diam_m=0.55,
         n_spheres=1095, station_mass_kg=2e9,
         color_bh=(20, 10, 80), color_accent=(100, 200, 255),
     ),
     SystemConfig(
-        "Sagittarius A*", "4.15M M_sun supermassive BH - galactic-scale harvesting",
+        "Sagittarius A*", "4.15M M_sun SMBH - tides too weak to harvest (scale demo)",
         bh_mass_msun=4.15e6, bh_dist_ly=26000,
-        orbit_ep_au=1.45, orbit_ap_au=1490.0,
-        sphere_mass_kg=1e13, sphere_density=1500.0,
-        sphere_rpm_max=60, sphere_rpm_target=54,
-        string_diam_m=4.50, string_tip_mass_kg=2.0e11,
+        orbit_ep_au=_ep_au(4.15e6, 50), orbit_ap_au=_ap_au(_ep_au(4.15e6, 50), 0.95),
+        sphere_mass_kg=5.0e9, sphere_density=1500.0,
+        string_diam_m=1.20,
         n_spheres=3650, station_mass_kg=1e11,
         color_bh=(60, 20, 0), color_accent=(255, 180, 80),
     ),
     SystemConfig(
-        "Primordial BH", "5e11 kg primordial BH - miniature, fast-depleting system",
+        "Primordial BH", "~5e11 kg primordial BH - non-physical toy (r_s ~ 1e-15 m)",
         bh_mass_msun=2.5e-19, bh_dist_ly=0.001,
-        orbit_ep_au=0.0001, orbit_ap_au=0.001,
+        orbit_ep_au=0.0001, orbit_ap_au=0.02,
         sphere_mass_kg=1e3, sphere_density=8000.0,
-        sphere_rpm_max=10000, sphere_rpm_target=9500,
-        string_diam_m=0.03, string_tip_mass_kg=0.05,
+        string_diam_m=0.03,
         n_spheres=100, station_mass_kg=1e3,
         color_bh=(80, 0, 40), color_accent=(255, 100, 200),
     ),
     SystemConfig(
-        "M87*", "6.5B M_sun ultramassive BH - extreme scale",
+        "M87*", "6.5B M_sun ultramassive BH - tides negligible (scale demo)",
         bh_mass_msun=6.5e9, bh_dist_ly=5.3e7,
-        orbit_ep_au=3000, orbit_ap_au=10000,
-        sphere_mass_kg=1e15, sphere_density=1500.0,
-        sphere_rpm_max=15, sphere_rpm_target=14,
-        string_diam_m=15.0, string_tip_mass_kg=5e12,
+        orbit_ep_au=_ep_au(6.5e9, 45), orbit_ap_au=_ap_au(_ep_au(6.5e9, 45), 0.90),
+        sphere_mass_kg=2.0e10, sphere_density=1500.0,
+        string_diam_m=2.00,
         n_spheres=10000, station_mass_kg=1e13,
         color_bh=(40, 40, 0), color_accent=(255, 255, 100),
     ),
@@ -378,23 +500,18 @@ PRESET_SYSTEMS = [
 def create_custom_config(bh_mass_msun, orbit_ep_au, orbit_ap_au,
                          sphere_mass_kg, sphere_rpm_target,
                          string_diam_m, n_spheres):
-    """Create a custom SystemConfig from user parameters."""
-    sphere_density = 2000.0
-    sphere_radius = (3.0 * sphere_mass_kg / (4.0 * PI * sphere_density)) ** (1.0/3.0)
-    sphere_i = 0.4 * sphere_mass_kg * sphere_radius**2
-    omega_tgt = sphere_rpm_target * 2.0 * PI / 60.0
-    e_oper = 0.5 * sphere_i * omega_tgt**2
-    rpm_max = sphere_rpm_target * 1.05  # 5% margin
-    string_tip_mass = sphere_mass_kg * 0.28
-    station_mass = max(1e6, sphere_mass_kg * 1e-2)
+    """Create a custom SystemConfig from user parameters.
 
+    sphere_rpm_target is accepted for UI compatibility but is now DERIVED from the
+    material's structural limit (5% below burst), like every other system."""
+    sphere_density = 2000.0
+    station_mass = max(1e6, sphere_mass_kg * 1e-2)
     return SystemConfig(
         "Custom", "User-configured system",
         bh_mass_msun=bh_mass_msun, bh_dist_ly=1000,
         orbit_ep_au=orbit_ep_au, orbit_ap_au=orbit_ap_au,
         sphere_mass_kg=sphere_mass_kg, sphere_density=sphere_density,
-        sphere_rpm_max=rpm_max, sphere_rpm_target=sphere_rpm_target,
-        string_diam_m=string_diam_m, string_tip_mass_kg=string_tip_mass,
+        string_diam_m=string_diam_m,
         n_spheres=n_spheres, station_mass_kg=station_mass,
         color_bh=(0, 60, 40), color_accent=(100, 255, 150),
     )
@@ -472,15 +589,18 @@ def time_fraction_from_true_anomaly(nu):
 def compute_phase_bounds():
     """Compute physically accurate phase bounds from orbital mechanics.
     Returns [0, t_charge_end, t_harvest_start, t_harvest_end, 1.0].
-    Charging: sphere within 5x EP distance (rapid periastron pass).
-    Harvesting: sphere within 5% of AP distance (slow apastron pass)."""
-    r_charge_end = min(5.0 * ORBIT_EP_M, 0.8 * ORBIT_AP_M)
+    Thresholds are relative to the EP->AP radial SPAN so they work at any
+    eccentricity or absolute scale:
+      Charging: inner 15% of the radial span (rapid periastron pass).
+      Harvesting: outer 10% of the radial span (slow apastron pass)."""
+    span = ORBIT_AP_M - ORBIT_EP_M
+    r_charge_end = ORBIT_EP_M + 0.15 * span
     cos_nu_charge = (ORBIT_A_M * (1.0 - ORBIT_E**2) / r_charge_end - 1.0) / ORBIT_E
     cos_nu_charge = max(-1.0, min(1.0, cos_nu_charge))
     nu_charge_end = math.acos(cos_nu_charge)
     t_charge_end = time_fraction_from_true_anomaly(nu_charge_end)
 
-    r_harvest = 0.95 * ORBIT_AP_M
+    r_harvest = ORBIT_AP_M - 0.10 * span
     cos_nu_harvest = (ORBIT_A_M * (1.0 - ORBIT_E**2) / r_harvest - 1.0) / ORBIT_E
     cos_nu_harvest = max(-1.0, min(1.0, cos_nu_harvest))
     nu_harvest_start = math.acos(cos_nu_harvest)
@@ -567,8 +687,36 @@ def _mix(c1, c2, t):
 # SECTION 4 -- GEOMETRY PRIMITIVES (to scale)
 # =============================================================================
 
+# Global tessellation multiplier. Every primitive below routes its segment
+# count through _seg(), so bumping this one knob raises curve smoothness
+# everywhere at once. Left at 1.0 for whole-scene modes (PREVIEW/SIMULATE
+# render dozens of objects -- BH, orbit, station, sphere, string, 150
+# constellation dots -- every frame via per-polygon pygame.draw calls, so an
+# indiscriminate global increase would tank frame rate); temporarily raised
+# only around MODEL mode's single-component builds (see _model_detail), where
+# just one or two objects are on screen and there's ample budget to spend on
+# visibly smoother curves.
+DETAIL_MULT = 1.0
+
 def _seg(s):
-    return max(6, int(round(s)))
+    return max(6, int(round(s * DETAIL_MULT)))
+
+@contextmanager
+def _model_detail(mult=5.5):
+    """Temporarily raise tessellation for a MODEL-mode single-component build.
+    Measured empirically against the full build_sphere() assembly (mixes
+    doubly-tessellated surfaces, singly-tessellated cylinders/rings/cones, and
+    a few fixed-count greeble loops that don't scale at all): mult=5.5 lands
+    the WHOLE sphere's total face count at ~10.8x its whole-scene value
+    (2,214 -> ~23,900 faces). Restores the previous multiplier afterward even
+    if building raises."""
+    global DETAIL_MULT
+    prev = DETAIL_MULT
+    DETAIL_MULT = mult
+    try:
+        yield
+    finally:
+        DETAIL_MULT = prev
 
 def _cyl(r, z0, z1, seg=32):
     seg = _seg(seg); verts, faces = [], []
@@ -904,15 +1052,29 @@ def build_black_hole():
 def build_orbit():
     """Elliptical orbit path from EP to AP."""
     m = []
-    segs = 64
+    # Sample UNIFORMLY IN TRUE ANOMALY, not time. The sphere blazes through
+    # periastron in almost no time (Kepler's 2nd law: equal areas, equal times),
+    # so uniform-TIME sampling (the old approach) puts almost no points near EP
+    # for a high-e orbit -- the resulting chord can cut drastically inside the
+    # true periastron distance (verified: 64 uniform-time segments at e=0.99 cut
+    # to just 31% of the true EP radius, i.e. the drawn path visibly plunges into
+    # the black hole even though the real orbit clears it by 500x). Uniform-nu
+    # sampling bounds the sagitta (chord deviation) to ~(2*pi/segs)^2/8 of the
+    # LOCAL radius everywhere on the ellipse, regardless of eccentricity.
+    segs = 180
     pts = []
     for i in range(segs):
-        t_frac = i / segs
-        nu = true_anomaly_from_time(t_frac)
+        nu = 2.0 * PI * i / segs
         r = ORBIT_A_M * (1.0 - ORBIT_E**2) / (1.0 + ORBIT_E * math.cos(nu))
         x = r * math.cos(nu) * DS
         z = r * math.sin(nu) * DS
         pts.append((x, 0, z))
+    # Tube thickness: normally a fixed fraction of the scene, but capped to a
+    # fraction of the periastron distance so it can never visually swallow the
+    # BH/disk-clearance gap we worked to preserve (critical for high-e orbits,
+    # where periastron is a tiny sliver of the whole AP-normalised scene).
+    path_hw = min(SCENE_R * 0.012, ORBIT_EP_DS * 0.15)
+    path_hh = min(SCENE_R * 0.004, ORBIT_EP_DS * 0.05)
     # Merge orbit segments into a single mesh for performance
     all_v = []
     all_f = []
@@ -925,7 +1087,7 @@ def build_orbit():
         if length < 1e-8:
             continue
         angle = math.atan2(dx, dz)
-        v, f = _box(0, 0, 0, SCENE_R * 0.012, SCENE_R * 0.004, length)
+        v, f = _box(0, 0, 0, path_hw, path_hh, length)
         base = len(all_v)
         Ry = rot_y(angle)
         offset = np.array([cx, 0, cz])
@@ -935,6 +1097,19 @@ def build_orbit():
         for ff in f:
             all_f.append(tuple(idx + base for idx in ff))
     m.append(Mesh(all_v, all_f, C_ORBIT, "Orbit path", alpha=200))
+
+    # All the decorations below (arrows, markers, velocity vectors, ghosts) were
+    # originally sized as fixed fractions of SCENE_R -- fine for a low-e orbit
+    # where periastron is a healthy fraction of the scene, but SCENE_R is pinned
+    # to APASTRON (DS = 1/AP), so for a high-e orbit these blow up wildly once
+    # placed near EP: e.g. a "SCENE_R*0.04" velocity arrow anchored at periastron
+    # is 8x LONGER than periastron itself, reading as a spike through the BH
+    # (exactly the collision-look bug, just in a different mesh than the path
+    # tube). Fix: cap every near-orbit decoration to a fraction of ITS OWN local
+    # radius (r*DS at the point it's actually drawn), not the whole-scene scale.
+    def _local(scene_frac, r_disp, local_frac):
+        return min(SCENE_R * scene_frac, max(r_disp, 1e-12) * local_frac)
+
     # Direction arrows along orbit (show travel direction)
     arrow_v, arrow_f = [], []
     n_arrows = 8
@@ -942,6 +1117,7 @@ def build_orbit():
         t = ai / n_arrows
         nu = true_anomaly_from_time(t)
         r = ORBIT_A_M * (1.0 - ORBIT_E**2) / (1.0 + ORBIT_E * math.cos(nu))
+        r_disp = r * DS
         x = r * math.cos(nu) * DS
         z = r * math.sin(nu) * DS
         # Next point for direction
@@ -951,8 +1127,10 @@ def build_orbit():
         z2 = r2 * math.sin(nu2) * DS
         dx, dz = x2 - x, z2 - z
         angle = math.atan2(dx, dz)
-        # Small arrow cone
-        v, f = _cone(SCENE_R * 0.003, 0, SCENE_R * 0.008, 6)
+        # Small arrow cone, capped to its own local orbital radius
+        arrow_base = _local(0.003, r_disp, 0.25)
+        arrow_len = _local(0.008, r_disp, 0.6)
+        v, f = _cone(arrow_base, 0, arrow_len, 6)
         base = len(arrow_v)
         Ry = rot_y(angle)
         for vv in v:
@@ -962,20 +1140,22 @@ def build_orbit():
             arrow_f.append(tuple(idx + base for idx in ff))
     if arrow_v:
         m.append(Mesh(arrow_v, arrow_f, C_ACCENT, "Direction arrows", emissive=True, alpha=160))
-    # EP marker
-    v, f = _sph(SCENE_R * 0.005, 12, 8)
+    # EP marker (capped to periastron's own local scale)
+    ep_r = _local(0.005, ORBIT_EP_DS, 0.15)
+    v, f = _sph(ep_r, 12, 8)
     m.append(Mesh(v, f, C_EP, "Periastron (EP)", emissive=True, alpha=200,
                   pivot=(ORBIT_EP_M * DS, 0, 0)))
     # EP ring (emphasize periastron)
-    v, f = _ring(SCENE_R * 0.008, SCENE_R * 0.006, 0, 16)
+    v, f = _ring(_local(0.008, ORBIT_EP_DS, 0.22), _local(0.006, ORBIT_EP_DS, 0.17), 0, 16)
     m.append(Mesh(v, f, C_EP, "EP ring", emissive=True, alpha=120,
                   pivot=(ORBIT_EP_M * DS, 0, 0)))
-    # AP marker
-    v, f = _sph(SCENE_R * 0.005, 12, 8)
+    # AP marker (AP == SCENE_R by construction, so this cap never binds)
+    ap_r = _local(0.005, ORBIT_AP_M * DS, 0.15)
+    v, f = _sph(ap_r, 12, 8)
     m.append(Mesh(v, f, C_AP, "Apastron (AP)", emissive=True, alpha=200,
                   pivot=(-ORBIT_AP_M * DS, 0, 0)))
     # AP ring (emphasize apastron)
-    v, f = _ring(SCENE_R * 0.008, SCENE_R * 0.006, 0, 16)
+    v, f = _ring(_local(0.008, ORBIT_AP_M * DS, 0.22), _local(0.006, ORBIT_AP_M * DS, 0.17), 0, 16)
     m.append(Mesh(v, f, C_AP, "AP ring", emissive=True, alpha=120,
                   pivot=(-ORBIT_AP_M * DS, 0, 0)))
     # Phase zone markers (4 colored dots at phase boundaries)
@@ -987,9 +1167,10 @@ def build_orbit():
     for i, (tf, pc) in enumerate(zip(phase_fracs, phase_colors)):
         nu = true_anomaly_from_time(tf)
         r = ORBIT_A_M * (1.0 - ORBIT_E**2) / (1.0 + ORBIT_E * math.cos(nu))
+        r_disp = r * DS
         x = r * math.cos(nu) * DS
         z = r * math.sin(nu) * DS
-        v, f = _sph(SCENE_R * 0.003, 8, 6)
+        v, f = _sph(_local(0.003, r_disp, 0.3), 8, 6)
         base = len(phase_v)
         for vv in v:
             phase_v.append((vv[0]+x, vv[1], vv[2]+z))
@@ -997,26 +1178,30 @@ def build_orbit():
             phase_f.append(tuple(idx + base for idx in ff))
     if phase_v:
         m.append(Mesh(phase_v, phase_f, C_ACCENT, "Phase markers", emissive=True, alpha=180))
-    # Velocity vector at EP (tangent to orbit, scaled)
-    vep_len = SCENE_R * 0.04 * (ORBIT_V_EP / max(ORBIT_V_EP, ORBIT_V_AP))
+    # Velocity vector at EP (tangent to orbit, scaled; V_EP is always the max
+    # speed on an ellipse so the ratio is always 1.0 -- length is capped to a
+    # fraction of periastron's own local scale, not the whole AP-sized scene).
     nu_ep = 0.0
     r_ep = ORBIT_A_M * (1.0 - ORBIT_E**2) / (1.0 + ORBIT_E * math.cos(nu_ep))
+    vep_len = _local(0.04, ORBIT_EP_DS, 0.6) * (ORBIT_V_EP / max(ORBIT_V_EP, ORBIT_V_AP))
+    vep_base = _local(0.003, ORBIT_EP_DS, 0.08)
     # Tangent direction at EP (perpendicular to radius, in orbital plane)
     vep_dx = -math.sin(nu_ep)
     vep_dz = math.cos(nu_ep)
     vep_angle = math.atan2(vep_dx, vep_dz)
-    v, f = _cone(SCENE_R * 0.003, 0, vep_len, 6)
+    v, f = _cone(vep_base, 0, vep_len, 6)
     m.append(Mesh(v, f, C_WARN, "V@EP vector", emissive=True, alpha=200,
                   pivot=(r_ep * math.cos(nu_ep) * DS, 0, r_ep * math.sin(nu_ep) * DS),
                   tilt=(0, vep_angle)))
-    # Velocity vector at AP
-    vap_len = SCENE_R * 0.04 * (ORBIT_V_AP / max(ORBIT_V_EP, ORBIT_V_AP))
+    # Velocity vector at AP (AP == SCENE_R by construction, so this cap never binds)
     nu_ap = PI
     r_ap = ORBIT_A_M * (1.0 - ORBIT_E**2) / (1.0 + ORBIT_E * math.cos(nu_ap))
+    vap_len = _local(0.04, ORBIT_AP_M * DS, 0.6) * (ORBIT_V_AP / max(ORBIT_V_EP, ORBIT_V_AP))
+    vap_base = _local(0.003, ORBIT_AP_M * DS, 0.08)
     vap_dx = -math.sin(nu_ap)
     vap_dz = math.cos(nu_ap)
     vap_angle = math.atan2(vap_dx, vap_dz)
-    v, f = _cone(SCENE_R * 0.003, 0, vap_len, 6)
+    v, f = _cone(vap_base, 0, vap_len, 6)
     m.append(Mesh(v, f, C_GOOD, "V@AP vector", emissive=True, alpha=200,
                   pivot=(r_ap * math.cos(nu_ap) * DS, 0, r_ap * math.sin(nu_ap) * DS),
                   tilt=(0, vap_angle)))
@@ -1027,9 +1212,10 @@ def build_orbit():
         t_g = gi / n_ghosts
         nu_g = true_anomaly_from_time(t_g)
         r_g = ORBIT_A_M * (1.0 - ORBIT_E**2) / (1.0 + ORBIT_E * math.cos(nu_g))
+        r_g_disp = r_g * DS
         x_g = r_g * math.cos(nu_g) * DS
         z_g = r_g * math.sin(nu_g) * DS
-        v, f = _sph(SCENE_R * 0.002, 6, 4)
+        v, f = _sph(_local(0.002, r_g_disp, 0.2), 6, 4)
         base = len(ghost_v)
         for vv in v:
             ghost_v.append((vv[0] + x_g, vv[1], vv[2] + z_g))
@@ -1039,11 +1225,11 @@ def build_orbit():
         m.append(Mesh(ghost_v, ghost_f, _mix(C_SPHERE, C_ORBIT, 0.5),
                       "Trajectory markers", alpha=80, emissive=True))
     return Part("orbit", "ORBITAL PATH", m, [
-        f"Periastron (EP): {ORBIT_EP_AU:.4f} AU ({ORBIT_EP_M:.3e} m)",
-        f"Apastron (AP): {ORBIT_AP_AU:.2f} AU ({ORBIT_AP_M:.3e} m)",
-        f"Semi-major axis: {ORBIT_A_M/AU_M:.2f} AU",
-        f"Eccentricity: {ORBIT_E:.4f}",
-        f"Orbital period: {ORBIT_PERIOD_YR:.1f} years",
+        f"Periastron (EP): {ORBIT_EP_M/1000:.0f} km ({ORBIT_EP_M/BH_RS:.0f} r_s)",
+        f"Apastron (AP): {ORBIT_AP_M/1000:.0f} km ({ORBIT_AP_M/ORBIT_EP_M:.0f}x EP)",
+        f"Semi-major axis: {ORBIT_A_M/1000:.0f} km",
+        f"Eccentricity: {ORBIT_E:.3f} (close EP, distant near-stationary AP)",
+        f"Orbital period: {fmt_time(ORBIT_PERIOD_S)}",
         f"Velocity at EP: {ORBIT_V_EP/1000:.1f} km/s",
         f"Velocity at AP: {ORBIT_V_AP/1000:.1f} km/s",
         f"Gravity at EP: {gravity_at_distance(ORBIT_EP_M):.2e} m/s^2",
@@ -1092,23 +1278,31 @@ def build_sphere():
     # Internal drum
     v, f = _cyl(r*0.3, -r*0.5, r*0.5, 16)
     m.append(Mesh(v, f, C_GEAR_HI, "Drum", spin=1.0, group="drum"))
-    # Gear train (4 stages of planetary gears)
+    # Gear train (4 stages of planetary gears).
+    # NOTE: the z-thickness offsets here MUST scale with r, not be an absolute
+    # constant -- an absolute 0.01 was harmless when r (SPHERE_DISP_R) was
+    # large, but once the sphere was correctly capped much smaller (relative
+    # to the black hole, see SPHERE_DISP_R notes), an absolute 0.01 became
+    # ~37x BIGGER than the whole sphere, blowing out its bounding box and
+    # making MODEL mode's per-focus normalisation shrink the actual sphere
+    # body down to invisibility to compensate. Always scale by r.
+    gz = r * 0.01
     for stage in range(GEAR_STAGES):
         sr = r * (0.15 + 0.05 * stage)
         sz = r * (0.3 - 0.08 * stage)
         # Sun gear
-        v, f = _cyl(sr * 0.3, sz-0.01, sz+0.01, 10)
+        v, f = _cyl(sr * 0.3, sz-gz, sz+gz, 10)
         m.append(Mesh(v, f, C_GEAR, f"Sun gear S{stage+1}", spin=2.0+stage, group="gear"))
         # Planet gears (3 per stage)
         for p in range(3):
             pa = 2*PI * p / 3
             px = sr * 0.65 * math.cos(pa)
             py = sr * 0.65 * math.sin(pa)
-            v, f = _cyl(sr * 0.2, sz-0.01, sz+0.01, 8)
+            v, f = _cyl(sr * 0.2, sz-gz, sz+gz, 8)
             m.append(Mesh(v, f, C_GEAR_HI, f"Planet {stage+1}.{p}",
                           spin=-(2.0+stage), pivot=(px, py, 0)))
         # Ring gear
-        v, f = _ann(sr, sr*0.9, sz-0.01, sz+0.01, 16)
+        v, f = _ann(sr, sr*0.9, sz-gz, sz+gz, 16)
         m.append(Mesh(v, f, C_GEAR, f"Ring S{stage+1}", alpha=160))
     # Drive shaft (connects gears to sphere interior)
     v, f = _cyl(r*0.05, -r*0.6, r*0.6, 12)
@@ -1246,10 +1440,10 @@ def build_sphere():
         f"Material: Graphene composite",
         f"Density: {SPHERE_DENSITY:.0f} kg/m^3",
         f"Tensile strength: {SPHERE_TENSILE_PA/1e9:.0f} GPa",
-        f"Max RPM: {SPHERE_RPM_MAX:.0f} ({SPHERE_E_MAX/3.6e18:.2f} PWh capacity)",
-        f"Target RPM: {SPHERE_RPM_TARGET:.0f} (5% below max)",
-        f"Operating energy: {SPHERE_E_OPER:.2e} J ({SPHERE_E_OPER/3.6e18:.2f} PWh)",
-        f"Max capacity: {SPHERE_E_MAX:.2e} J ({SPHERE_E_MAX/3.6e18:.2f} PWh at {SPHERE_RPM_MAX:.0f} RPM)",
+        f"Max RPM: {SPHERE_RPM_MAX:.0f} ({fmt_energy(SPHERE_E_MAX)} capacity)",
+        f"Target RPM: {SPHERE_RPM_TARGET:.0f} (5% below structural max)",
+        f"Operating energy: {SPHERE_E_OPER:.2e} J ({fmt_energy(SPHERE_E_OPER)})",
+        f"Max capacity: {SPHERE_E_MAX:.2e} J ({fmt_energy(SPHERE_E_MAX)} at {SPHERE_RPM_MAX:.0f} RPM)",
         f"Moment of inertia: {SPHERE_I:.2e} kg m^2",
         f"Gear ratio: {GEAR_RATIO_TOTAL:.0f}:1 ({GEAR_STAGES} stages x {GEAR_RATIO_PER:.0f}:1)",
         f"Efficiency: {GEAR_EFFICIENCY*100:.0f}%",
@@ -1279,8 +1473,15 @@ def build_string(extension_frac=0.0):
     cur_len = max_len * extension_frac
     if cur_len < 0.001:
         cur_len = 0.001
-    # String shaft (from pole toward BH, i.e. -X direction)
-    str_r = max(0.003, STRING_DIAM_M * DS * STRING_DISP_SCALE * 10)  # visible thickness
+    # String shaft (from pole toward BH, i.e. -X direction).
+    # Floors used to be absolute constants (0.003/0.01/0.015) sized for the OLD,
+    # much larger SPHERE_DISP_R; now that the sphere is capped relative to
+    # BH_DISP_R (see module-level notes), those floors would make the string
+    # thicker and the tip mass bigger than the sphere itself. Scale the floors
+    # (and a sane ceiling) off BH_DISP_R instead, so everything attached to the
+    # sphere shrinks and grows together with it.
+    str_r = min(BH_DISP_R * 0.3,
+                max(BH_DISP_R * 0.05, STRING_DIAM_M * DS * STRING_DISP_SCALE * 10))
     v, f = _cyl(str_r, -r_sphere * 1.1 - cur_len, -r_sphere * 1.1, 12)
     m.append(Mesh(v, f, C_STRING, "String", alpha=220))
     # Tapered section near tip
@@ -1288,7 +1489,8 @@ def build_string(extension_frac=0.0):
         v, f = _cone(str_r * 1.5, -r_sphere * 1.1 - cur_len, -r_sphere * 1.1 - cur_len + 0.02, 12)
         m.append(Mesh(v, f, _mix(C_STRING, C_TIP, 0.3), "String taper", alpha=200))
     # Tip mass (osmium sphere) with detail
-    tip_r = max(0.01, STRING_TIP_R_M * DS * STRING_DISP_SCALE * 10)
+    tip_r = min(BH_DISP_R * 0.5,
+                max(BH_DISP_R * 0.15, STRING_TIP_R_M * DS * STRING_DISP_SCALE * 10))
     v, f = _sph(tip_r, 12, 8)
     m.append(Mesh(v, f, C_TIP, "Tip mass (osmium)",
                   pivot=(-r_sphere * 1.1 - cur_len - tip_r, 0, 0)))
@@ -1297,7 +1499,7 @@ def build_string(extension_frac=0.0):
                 -r_sphere * 1.1 - cur_len - tip_r * 0.05, 12)
     m.append(Mesh(v, f, C_GEAR, "Tip attachment ring", alpha=180))
     # Deployment drum mechanism (at sphere pole, where string exits)
-    drum_r = max(0.015, str_r * 3)
+    drum_r = max(BH_DISP_R * 0.2, str_r * 3)
     v, f = _cyl(drum_r, -r_sphere * 1.12, -r_sphere * 1.08, 12)
     m.append(Mesh(v, f, C_DEPLOY, "Deployment drum", alpha=200))
     # Drum end caps
@@ -1527,7 +1729,7 @@ def build_station():
         if mesh._static_wv is not None:
             mesh._static_wv = mesh.verts + mesh.pivot
     return Part("station", "SPACE STATION (AP)", m, [
-        f"Position: Apastron ({ORBIT_AP_AU:.2f} AU, circular orbit)",
+        f"Position: Apastron ({ORBIT_AP_M/1000:.0f} km, circular orbit)",
         f"Mass: ~{STATION_MASS_KG:.0e} kg",
         f"Gravity at AP: {gravity_at_distance(ORBIT_AP_M):.2e} m/s^2",
         f"Station orbit: circular at AP, v_circ={math.sqrt(G*BH_MASS_KG/ORBIT_AP_M)/1000:.1f} km/s",
@@ -1661,16 +1863,30 @@ def build_constellation(n_spheres=None):
         sph_segs, sph_rings = 4, 3  # very low detail (12 faces/sphere)
     else:
         sph_segs, sph_rings = 5, 4  # low detail (20 faces/sphere)
-    # Also build orbit path segments connecting sphere positions
+    # Also build orbit path segments connecting sphere positions.
+    # Same fix as build_orbit(): dots/segments were a fixed SCENE_R fraction with
+    # no regard for local scale, so the dot placed exactly at periastron (i=0)
+    # was 0.8x the periastron distance itself -- nearly touching the BH. Only
+    # that first dot/segment is actually affected (by i=1, r is already 4.5x EP
+    # and shrinks to a comfortable 18%), so cap each dot/segment to a fraction of
+    # its OWN local orbital radius, same principle as build_orbit()'s `_local()`.
+    # ALSO cap by BH_DISP_R: these dots depict the same physical hardware as the
+    # "energy sphere" (identical spheres in the fleet), which is deliberately
+    # capped smaller than the BH (real sphere is ~1600x smaller than the BH) --
+    # without the same cap here, a dot far from periastron reverts to the old
+    # fixed SCENE_R*0.004 size, ~9x BIGGER than the BH, the same honesty
+    # inversion just in a different mesh.
     path_v = []
     path_f = []
     for i in range(n_vis):
         t_frac = i / n_spheres
         nu = true_anomaly_from_time(t_frac)
         r = ORBIT_A_M * (1.0 - ORBIT_E**2) / (1.0 + ORBIT_E * math.cos(nu))
+        r_disp = r * DS
         x = r * math.cos(nu) * DS
         z = r * math.sin(nu) * DS
-        v, f = _sph(SCENE_R * 0.004, sph_segs, sph_rings)
+        dot_r = min(SCENE_R * 0.004, BH_DISP_R * 0.6, r_disp * 0.35)
+        v, f = _sph(dot_r, sph_segs, sph_rings)
         base = len(all_v)
         for vv in v:
             all_v.append((vv[0] + x, vv[1], vv[2] + z))
@@ -1681,6 +1897,7 @@ def build_constellation(n_spheres=None):
             t_next = (i + 1) / n_spheres
             nu2 = true_anomaly_from_time(t_next)
             r2 = ORBIT_A_M * (1.0 - ORBIT_E**2) / (1.0 + ORBIT_E * math.cos(nu2))
+            r2_disp = r2 * DS
             x2 = r2 * math.cos(nu2) * DS
             z2 = r2 * math.sin(nu2) * DS
             cx, cz = (x + x2) / 2, (z + z2) / 2
@@ -1688,7 +1905,10 @@ def build_constellation(n_spheres=None):
             length = math.hypot(dx, dz)
             if length > 1e-8:
                 angle = math.atan2(dx, dz)
-                v, f = _box(0, 0, 0, SCENE_R * 0.001, SCENE_R * 0.0004, length)
+                r_min = min(r_disp, r2_disp)
+                seg_hw = min(SCENE_R * 0.001, BH_DISP_R * 0.15, r_min * 0.1)
+                seg_hh = min(SCENE_R * 0.0004, BH_DISP_R * 0.06, r_min * 0.04)
+                v, f = _box(0, 0, 0, seg_hw, seg_hh, length)
                 base = len(path_v)
                 Ry = rot_y(angle)
                 offset = np.array([cx, 0, cz])
@@ -1704,178 +1924,123 @@ def build_constellation(n_spheres=None):
     return Part("constellation", "SPHERE CONSTELLATION", m, [
         f"Count: {N_SPHERES} spheres",
         f"Harvest rate: 1 per day",
-        f"Energy/harvest: {SPHERE_E_PWH:.2e} J ({SPHERE_E_PWH/3.6e18:.2f} PWh)",
-        f"Mass equivalent/harvest: {MASS_PER_HARVEST:.0f} kg (E=mc^2)",
+        f"Energy/harvest: {SPHERE_E_OPER:.2e} J ({fmt_energy(SPHERE_E_OPER)})",
+        f"Mass equivalent/harvest: {MASS_PER_HARVEST:.3g} kg (E=mc^2)",
         f"Total harvests to deplete BH: {HARVESTS_TO_DEPLETE:.2e}",
         f"Depletion time: {DEPLETE_YEARS:.2e} years",
-        f"Annual energy: {N_SPHERES * SPHERE_E_PWH / 3.6e18:.0f} PWh/yr",
-        f"Powers ~{HOMES_POWERED/1e6:.0f}M homes continuously",
+        f"Annual energy: {fmt_energy(N_SPHERES * SPHERE_E_OPER)}/yr",
+        f"Powers ~{HOMES_POWERED/1e6:.1f}M homes continuously",
         "Phased orbits: one EP passage per day",
         f"Visual: {n_vis} dots + connecting path line",
     ], 6, (0, 0, -0.2), C_SPHERE)
 
 
 def build_trail(sim):
-    """Build a fading trail mesh from recent orbital positions."""
-    if len(sim.trail) < 2:
-        return None
+    """Build fading trail meshes from recent orbital positions of all spheres."""
     all_v = []
     all_f = []
-    n = len(sim.trail)
-    for i in range(n - 1):
-        x0, z0 = sim.trail[i]
-        x1, z1 = sim.trail[i + 1]
-        dx, dz = x1 - x0, z1 - z0
-        length = math.hypot(dx, dz)
-        if length < 1e-8:
+    has_trail = False
+    for si, sphere in enumerate(sim.spheres):
+        trail = sphere['trail']
+        if len(trail) < 2:
             continue
-        # Fade: older segments are thinner
-        frac = (i + 1) / n  # 0..1, newer = higher
-        thickness = max(SCENE_R * 0.0003, SCENE_R * 0.0012 * frac)
-        cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
-        angle = math.atan2(dx, dz)
-        v, f = _box(0, 0, 0, thickness, SCENE_R * 0.0002, length)
-        base = len(all_v)
-        Ry = rot_y(angle)
-        offset = np.array([cx, 0, cz])
-        for vv in v:
-            tv = Ry @ np.array(vv) + offset
-            all_v.append(tuple(tv))
-        for ff in f:
-            all_f.append(tuple(idx + base for idx in ff))
-    if not all_v:
+        has_trail = True
+        n = len(trail)
+        # Color tint per sphere
+        base_col = _mix(C_ACCENT, C_SPHERE, si / max(1, SIM_SPHERES - 1))
+        for i in range(n - 1):
+            x0, z0 = trail[i]
+            x1, z1 = trail[i + 1]
+            dx, dz = x1 - x0, z1 - z0
+            length = math.hypot(dx, dz)
+            if length < 1e-8:
+                continue
+            frac = (i + 1) / n
+            thickness = max(SCENE_R * 0.0003, SCENE_R * 0.0012 * frac)
+            cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
+            angle = math.atan2(dx, dz)
+            v, f = _box(0, 0, 0, thickness, SCENE_R * 0.0002, length)
+            base = len(all_v)
+            Ry = rot_y(angle)
+            offset = np.array([cx, 0, cz])
+            for vv in v:
+                tv = Ry @ np.array(vv) + offset
+                all_v.append(tuple(tv))
+            for ff in f:
+                all_f.append(tuple(idx + base for idx in ff))
+    if not has_trail or not all_v:
         return None
-    # Color fades from dim to bright accent
-    m = [Mesh(all_v, all_f, C_ACCENT, "Orbital trail", alpha=120, emissive=True)]
-    return Part("trail", "ORBITAL TRAIL", m, [
-        f"Trail points: {n}",
-        f"Shows recent orbital path",
+    m = [Mesh(all_v, all_f, C_ACCENT, "Orbital trails", alpha=100, emissive=True)]
+    return Part("trail", "ORBITAL TRAILS", m, [
+        f"Spheres tracked: {SIM_SPHERES}",
+        f"Shows recent orbital paths for all spheres",
     ], 7, (0, 0, 0), C_ACCENT)
 
 
 def build_energy_effects(sim):
-    """Dynamic visual effects based on simulation state.
-    Shows energy flow beams, charging glow, and spin indicators."""
+    """Dynamic visual effects for all spheres in the constellation."""
     m = []
-    sx, sz, r = sim.orbital_pos()
     station_x = -ORBIT_AP_M * DS
     station_z = 0.0
 
-    # Phase 0: Charging - string tension glow near sphere pole
-    if sim.phase_idx == 0 and sim.string_ext > 0.01:
-        # Glow sphere at sphere pole (where string attaches)
-        glow_r = SCENE_R * 0.003 + SCENE_R * 0.001 * sim.string_ext
-        v, f = _sph(glow_r, 10, 6)
-        # Position near sphere pole pointing toward BH
-        bh_angle = math.atan2(-sz, sx)
-        gx = sx + math.cos(bh_angle) * SCENE_R * 0.006
-        gz = sz + math.sin(bh_angle) * SCENE_R * 0.006
-        m.append(Mesh(v, f, C_WARN, "Charging glow", emissive=True, alpha=180,
-                      pivot=(gx, 0, gz)))
-        # Tension line glow segments along string
-        if sim.string_ext > 0.05:
-            n_glow = 6
-            glow_v, glow_f = [], []
-            str_r = SCENE_R * 0.0006
-            for i in range(n_glow):
-                frac = i / n_glow
-                # Position along string from sphere toward BH
-                t = frac * sim.string_ext
-                px = sx + math.cos(bh_angle) * (SCENE_R * 0.006 + t * SCENE_R * 0.02)
-                pz = sz + math.sin(bh_angle) * (SCENE_R * 0.006 + t * SCENE_R * 0.02)
-                v, f = _sph(str_r * (1.5 - frac * 0.5), 6, 4)
-                base = len(glow_v)
-                for vv in v:
-                    glow_v.append((vv[0] + px, vv[1], vv[2] + pz))
-                for ff in f:
-                    glow_f.append(tuple(idx + base for idx in ff))
-            if glow_v:
-                m.append(Mesh(glow_v, glow_f, _mix(C_WARN, C_LASER, 0.4),
-                             "Tension glow", emissive=True, alpha=120))
+    for sphere in sim.spheres:
+        s_t = sphere['t_frac']
+        s_phase = sphere['phase_idx']
+        s_ext = sphere['string_ext']
+        s_laser = sphere['laser_active']
+        sx, sz, r = orbital_position(s_t)
 
-    # Phase 2: Harvesting - energy beam/glow between sphere and station
-    if sim.phase_idx == 2:
-        dx = sx - station_x
-        dz = sz - station_z
-        dist = math.hypot(dx, dz)
-        har_frac = 1.0 - (sim.t_frac - sim.phase_bounds[2]) / (sim.phase_bounds[3] - sim.phase_bounds[2])
-        if dist > 0.01:
-            angle = math.atan2(dx, dz)
-            # Main energy beam (pulsing green)
-            beam_r = SCENE_R * 0.001 + SCENE_R * 0.0005 * har_frac
-            v, f = _cone(beam_r, 0, dist, 8)
-            m.append(Mesh(v, f, C_COIL, "Energy beam", emissive=True, alpha=140,
-                          pivot=(station_x, 0, station_z), tilt=(0, angle)))
-            # Inner bright core
-            v, f = _cone(beam_r * 0.4, 0, dist * 0.95, 6)
-            m.append(Mesh(v, f, C_GOOD, "Beam core", emissive=True, alpha=200,
-                          pivot=(station_x, 0, station_z), tilt=(0, angle)))
-            # Energy flow particles along beam (small spheres traveling station->sphere)
-            n_flow = 5
-            flow_v, flow_f = [], []
-            for fi in range(n_flow):
-                t = (fi + 0.5) / n_flow  # 0 at station, 1 at sphere
-                # Interpolate position along beam
-                px = station_x + dx * t
-                pz = station_z + dz * t
-                v, f = _sph(SCENE_R * 0.0006, 5, 4)
-                base = len(flow_v)
-                for vv in v:
-                    flow_v.append((vv[0] + px, vv[1], vv[2] + pz))
-                for ff in f:
-                    flow_f.append(tuple(idx + base for idx in ff))
-            if flow_v:
-                m.append(Mesh(flow_v, flow_f, C_GOOD, "Energy flow particles",
-                              emissive=True, alpha=200))
-        # Glow at sphere (harvest point) - always show during harvest
-        v, f = _sph(SCENE_R * 0.004, 10, 6)
-        m.append(Mesh(v, f, C_COIL, "Harvest glow", emissive=True, alpha=160,
-                      pivot=(sx, 0, sz)))
-        # Glow at station coils - always show during harvest
-        v, f = _sph(SCENE_R * 0.003, 10, 6)
-        m.append(Mesh(v, f, C_COIL, "Coil glow", emissive=True, alpha=160,
+        # Phase 0: Charging - string tension glow
+        if s_phase == 0 and s_ext > 0.01:
+            glow_r = SCENE_R * 0.003 + SCENE_R * 0.001 * s_ext
+            v, f = _sph(glow_r, 8, 5)
+            bh_angle = math.atan2(-sz, sx)
+            gx = sx + math.cos(bh_angle) * SCENE_R * 0.006
+            gz = sz + math.sin(bh_angle) * SCENE_R * 0.006
+            m.append(Mesh(v, f, C_WARN, "Charging glow", emissive=True, alpha=160,
+                          pivot=(gx, 0, gz)))
+
+        # Phase 2: Harvesting - energy beam to station
+        if s_phase == 2:
+            dx = sx - station_x
+            dz = sz - station_z
+            dist = math.hypot(dx, dz)
+            har_frac = 1.0 - (s_t - sim.phase_bounds[2]) / (sim.phase_bounds[3] - sim.phase_bounds[2])
+            if dist > 0.01:
+                angle = math.atan2(dx, dz)
+                beam_r = SCENE_R * 0.001 + SCENE_R * 0.0005 * har_frac
+                v, f = _cone(beam_r, 0, dist, 6)
+                m.append(Mesh(v, f, C_COIL, "Energy beam", emissive=True, alpha=120,
+                              pivot=(station_x, 0, station_z), tilt=(0, angle)))
+                v, f = _cone(beam_r * 0.4, 0, dist * 0.95, 5)
+                m.append(Mesh(v, f, C_GOOD, "Beam core", emissive=True, alpha=180,
+                              pivot=(station_x, 0, station_z), tilt=(0, angle)))
+            # Harvest glow at sphere
+            v, f = _sph(SCENE_R * 0.004, 8, 5)
+            m.append(Mesh(v, f, C_COIL, "Harvest glow", emissive=True, alpha=140,
+                          pivot=(sx, 0, sz)))
+
+        # Phase 1/3: Laser correction glow
+        if s_laser:
+            v, f = _sph(SCENE_R * 0.002, 6, 4)
+            m.append(Mesh(v, f, C_LASER_HI, "Laser impact", emissive=True, alpha=180,
+                          pivot=(sx, 0, sz)))
+
+    # Station coil glow if any sphere is harvesting
+    any_harvesting = any(s['phase_idx'] == 2 for s in sim.spheres)
+    if any_harvesting:
+        v, f = _sph(SCENE_R * 0.003, 8, 5)
+        m.append(Mesh(v, f, C_COIL, "Coil glow", emissive=True, alpha=140,
                       pivot=(station_x, 0, station_z)))
-        # Magnetic field rings around sphere (Halbach array visualization)
-        n_rings = 3
-        ring_v, ring_f = [], []
-        for ri in range(n_rings):
-            ring_r = SCENE_R * 0.005 + SCENE_R * 0.002 * ri
-            v, f = _ring(ring_r, ring_r * 0.9, 0, 16)
-            base = len(ring_v)
-            for vv in v:
-                ring_v.append((vv[0] + sx, vv[1], vv[2] + sz))
-            for ff in f:
-                ring_f.append(tuple(idx + base for idx in ff))
-        if ring_v:
-            m.append(Mesh(ring_v, ring_f, C_HALBACH, "Magnetic field", emissive=True, alpha=100))
-        # Magnetic field lines (torus around sphere showing dipole field)
-        v, f = _torus(SCENE_R * 0.005, SCENE_R * 0.001, 12, 6)
-        m.append(Mesh(v, f, C_HALBACH, "Field lines (torus)", emissive=True, alpha=80,
-                      pivot=(sx, 0, sz)))
-        # Spin indicator ring (shows sphere is spinning, counter-rotating)
-        v, f = _ring(SCENE_R * 0.004, SCENE_R * 0.0035, 0, 16)
-        m.append(Mesh(v, f, C_FLYWHEEL, "Spin indicator", spin=2.0, group="drum",
-                      alpha=120, emissive=True, pivot=(sx, 0, sz)))
-
-    # Phase 1: Laser correction - brighten laser beam
-    if sim.phase_idx == 1 and sim.laser_active:
-        # Laser glow at sphere position
-        v, f = _sph(SCENE_R * 0.002, 8, 6)
-        m.append(Mesh(v, f, C_LASER_HI, "Laser impact", emissive=True, alpha=200,
-                      pivot=(sx, 0, sz)))
-
-    # Phase 3: Laser correction at AP
-    if sim.phase_idx == 3 and sim.laser_active:
-        v, f = _sph(SCENE_R * 0.002, 8, 6)
-        m.append(Mesh(v, f, C_LASER_HI, "Laser impact", emissive=True, alpha=200,
-                      pivot=(sx, 0, sz)))
 
     if not m:
         return None
+    n_harvesting = sum(1 for s in sim.spheres if s['phase_idx'] == 2)
+    n_charging = sum(1 for s in sim.spheres if s['phase_idx'] == 0)
     return Part("effects", "ENERGY FLOW", m, [
-        f"Phase: {sim.phase_name()}",
-        f"Active effects: {len(m)}",
-        "Components: beam, core, flow particles, field rings, torus, spin indicator",
+        f"Spheres harvesting: {n_harvesting}/{SIM_SPHERES}",
+        f"Spheres charging: {n_charging}/{SIM_SPHERES}",
+        f"Total harvests: {sim.total_harvests}",
     ], 7, (0, 0, 0), C_GOOD)
 
 
@@ -2329,7 +2494,7 @@ class BHHRenderer:
                 cr, cg, cb = col
                 ma = mesh.alpha
                 z = cam[:, 2]
-                safe = np.where(z > 0.05, z, 1e9)
+                safe = np.maximum(z, 0.001)
                 sx = cx + focal * cam[:, 0] / safe
                 sy = cy - focal * cam[:, 1] / safe
 
@@ -2350,7 +2515,7 @@ class BHHRenderer:
                     nx[flip] *= -1; ny[flip] *= -1; nz[flip] *= -1
                     zv = z[idx]  # (nf, 3)
                     face_z = (zv[:, 0] + zv[:, 1] + zv[:, 2]) / 3.0
-                    vis = (zv[:, 0] > 0.05) & (zv[:, 1] > 0.05) & (zv[:, 2] > 0.05)
+                    vis = (zv[:, 0] > 0.001) & (zv[:, 1] > 0.001) & (zv[:, 2] > 0.001)
                     if self.cull:
                         vis &= nz < 0.01
                         # Area cull: skip tiny faces
@@ -2406,7 +2571,7 @@ class BHHRenderer:
                     nx[flip] *= -1; ny[flip] *= -1; nz[flip] *= -1
                     zv = z[idx]  # (nf, 4)
                     face_z = (zv[:, 0] + zv[:, 1] + zv[:, 2] + zv[:, 3]) / 4.0
-                    vis = (zv[:, 0] > 0.05) & (zv[:, 1] > 0.05) & (zv[:, 2] > 0.05) & (zv[:, 3] > 0.05)
+                    vis = (zv[:, 0] > 0.001) & (zv[:, 1] > 0.001) & (zv[:, 2] > 0.001) & (zv[:, 3] > 0.001)
                     if self.cull:
                         vis &= nz < 0.01
                         # Area cull: skip tiny faces (quad = sum of 2 triangles)
@@ -2499,12 +2664,21 @@ class BHHRenderer:
 
         # Labels
         if self.show_labels and font:
-            labels.sort(key=itemgetter(0))
+            # Anti-overlap must process labels in ascending SCREEN-Y order, not
+            # camera depth: sorting by depth lets a nearer-depth label with a
+            # smaller natural Y get processed after a farther one that already
+            # claimed a spot below it, so the single forward scan under-detects
+            # the collision and two labels can land on the exact same row (seen
+            # when several parts cluster near the same point on screen, e.g. the
+            # sphere/string/station all close to the BH in one framing). Sorting
+            # by Y first makes the cascade strictly monotonic: each label only
+            # ever needs to push DOWN past ones already placed above it.
+            labels.sort(key=lambda L: L[1][1])
             used = []
             for _, (lxp, lyp), text in labels:
                 ly2 = lyp
                 for uy in used:
-                    if abs(ly2 - uy) < 15:
+                    if ly2 - uy < 15:
                         ly2 = uy + 15
                 used.append(ly2)
                 img = _render_text(font, text, C_TEXT)
@@ -2527,95 +2701,120 @@ class BHHRenderer:
 # =============================================================================
 
 class SimState:
-    """Tracks the orbital cycle simulation."""
+    """Tracks the orbital cycle simulation for a constellation of spheres."""
 
     PHASES = ["Charging (EP)", "Outbound transit", "Harvesting (AP)", "Inbound return"]
     PHASE_DESC = [
         "String unreels into tidal gradient -> pull-to-rotation spins sphere to target RPM",
         "String retracts; sphere coasts at full RPM; gravity laser corrects orbital drift near EP",
-        "Magnetic inductive coupling harvests spin energy -> 135 GW; rotation decelerates to 0 RPM",
+        "Magnetic inductive coupling harvests the spin energy; rotation decelerates to 0 RPM",
         "Sphere coasts inbound at 0 RPM; gravity laser at AP restores EP for next cycle",
     ]
 
     def __init__(self):
         self.phase_bounds = compute_phase_bounds()
-        self.t_frac = 0.0         # 0..1 fraction of orbital period
-        self.speed = 0.05         # simulation speed (fraction per second)
+        self.speed = 0.05
         self.paused = False
-        self.rpm = 0.0
-        self.energy_j = 0.0
-        self.string_ext = 0.0     # 0..1
-        self.phase_idx = 0
+        self.gyro_angle = 0.0
         self.cycle_count = 0
         self.total_energy_harvested = 0.0
-        self.disc_angle = 0.0     # for spin animation
-        self.gyro_angle = 0.0
-        self.laser_active = False
-        self.harvest_power_w = 0.0
+        self.total_harvests = 0
         self.orbit_drift_km = 0.0
-        self.trail = []           # recent (x, z) positions for trail visualization
-        self.trail_max = 60       # max trail points
+        self.bh_critical = False
+        self.bh_instability = 0.0  # 0..1, rises as harvests approach critical
+        # Per-sphere states, evenly spaced in mean anomaly
+        self.spheres = []
+        for i in range(SIM_SPHERES):
+            offset = i / SIM_SPHERES
+            self.spheres.append(self._make_sphere(offset))
+        # Lead sphere (index 0) provides backward-compatible fields
+        self.t_frac = self.spheres[0]['t_frac']
+
+    @staticmethod
+    def _make_sphere(t_frac):
+        return {
+            't_frac': t_frac,
+            'rpm': 0.0,
+            'energy_j': 0.0,
+            'string_ext': 0.0,
+            'phase_idx': 0,
+            'laser_active': False,
+            'harvest_power_w': 0.0,
+            'disc_angle': 0.0,
+            'trail': [],
+        }
+
+    def _update_sphere_phase(self, s):
+        pb = self.phase_bounds
+        if s['t_frac'] < pb[1]:
+            s['phase_idx'] = 0
+        elif s['t_frac'] < pb[2]:
+            s['phase_idx'] = 1
+        elif s['t_frac'] < pb[3]:
+            s['phase_idx'] = 2
+        else:
+            s['phase_idx'] = 3
+
+        if s['phase_idx'] == 0:
+            charge_frac = s['t_frac'] / pb[1]
+            s['string_ext'] = charge_frac
+            s['rpm'] = SPHERE_RPM_TARGET * charge_frac
+            s['energy_j'] = SPHERE_E_PWH * charge_frac
+            s['laser_active'] = False
+            s['harvest_power_w'] = 0.0
+        elif s['phase_idx'] == 1:
+            out_frac = (s['t_frac'] - pb[1]) / (pb[2] - pb[1])
+            s['string_ext'] = max(0.0, 1.0 - out_frac * 3.0)
+            s['rpm'] = SPHERE_RPM_TARGET
+            s['energy_j'] = SPHERE_E_PWH
+            s['laser_active'] = (out_frac < 0.15)
+            s['harvest_power_w'] = 0.0
+        elif s['phase_idx'] == 2:
+            har_frac = (s['t_frac'] - pb[2]) / (pb[3] - pb[2])
+            s['rpm'] = SPHERE_RPM_TARGET * (1.0 - har_frac)
+            s['energy_j'] = SPHERE_E_PWH * (1.0 - har_frac)
+            s['string_ext'] = 0.0
+            s['laser_active'] = True
+            s['harvest_power_w'] = harvest_power()
+        else:
+            s['rpm'] = 0.0
+            s['energy_j'] = 0.0
+            s['string_ext'] = 0.0
+            s['laser_active'] = False
+            s['harvest_power_w'] = 0.0
 
     def update(self, dt):
         if not self.paused:
-            self.t_frac += self.speed * dt
-            if self.t_frac >= 1.0:
-                self.t_frac -= 1.0
-                self.cycle_count += 1
-                self.total_energy_harvested += HARVEST_ENERGY_J
-                self.orbit_drift_km += EP_DRIFT_KM
-
-        # Determine phase
-        if self.t_frac < self.phase_bounds[1]:
-            self.phase_idx = 0    # Charging at EP
-        elif self.t_frac < self.phase_bounds[2]:
-            self.phase_idx = 1    # Outbound
-        elif self.t_frac < self.phase_bounds[3]:
-            self.phase_idx = 2    # Harvesting at AP
-        else:
-            self.phase_idx = 3    # Inbound
-
-        # Charging: spin up sphere as string unreels
-        if self.phase_idx == 0:
-            charge_frac = self.t_frac / self.phase_bounds[1]
-            self.string_ext = charge_frac
-            self.rpm = SPHERE_RPM_TARGET * charge_frac
-            self.energy_j = SPHERE_E_PWH * charge_frac
-            self.laser_active = False
-            self.harvest_power_w = 0.0
-        elif self.phase_idx == 1:
-            # Outbound: string retracts, RPM holds, laser corrects near EP
-            out_frac = (self.t_frac - self.phase_bounds[1]) / (self.phase_bounds[2] - self.phase_bounds[1])
-            self.string_ext = max(0.0, 1.0 - out_frac * 3.0)  # retract over first 1/3
-            self.rpm = SPHERE_RPM_TARGET
-            self.energy_j = SPHERE_E_PWH
-            self.laser_active = (out_frac < 0.15)
-            self.harvest_power_w = 0.0
-        elif self.phase_idx == 2:
-            # Harvesting: spin down to 0
-            har_frac = (self.t_frac - self.phase_bounds[2]) / (self.phase_bounds[3] - self.phase_bounds[2])
-            self.rpm = SPHERE_RPM_TARGET * (1.0 - har_frac)
-            self.energy_j = SPHERE_E_PWH * (1.0 - har_frac)
-            self.string_ext = 0.0
-            self.laser_active = True
-            self.harvest_power_w = harvest_power()
-        else:
-            # Inbound: coast at 0 RPM
-            self.rpm = 0.0
-            self.energy_j = 0.0
-            self.string_ext = 0.0
-            self.laser_active = False
-            self.harvest_power_w = 0.0
-
-        # Animation angles
-        self.disc_angle += self.rpm * 2.0 * PI / 60.0 * dt
+            for s in self.spheres:
+                s['t_frac'] += self.speed * dt
+                if s['t_frac'] >= 1.0:
+                    s['t_frac'] -= 1.0
+                    self.total_harvests += 1
+                    self.total_energy_harvested += HARVEST_ENERGY_J
+                    self.orbit_drift_km += EP_DRIFT_KM
+                    if self.total_harvests >= HARVESTS_TO_CRITICAL:
+                        self.bh_critical = True
+                self._update_sphere_phase(s)
+                s['disc_angle'] += s['rpm'] * 2.0 * PI / 60.0 * dt
+                # Trail
+                tx, tz, _ = orbital_position(s['t_frac'])
+                s['trail'].append((tx, tz))
+                if len(s['trail']) > 30:
+                    s['trail'].pop(0)
+            # Update lead sphere backward-compat fields
+            lead = self.spheres[0]
+            self.t_frac = lead['t_frac']
+            self.rpm = lead['rpm']
+            self.energy_j = lead['energy_j']
+            self.string_ext = lead['string_ext']
+            self.phase_idx = lead['phase_idx']
+            self.laser_active = lead['laser_active']
+            self.harvest_power_w = lead['harvest_power_w']
+            self.disc_angle = lead['disc_angle']
+            self.trail = lead['trail']
+        # BH instability fraction
+        self.bh_instability = min(1.0, self.total_harvests / HARVESTS_TO_CRITICAL)
         self.gyro_angle += STATION_GYRO_RPM * 2.0 * PI / 60.0 * dt
-
-        # Record trail point
-        tx, tz, _ = orbital_position(self.t_frac)
-        self.trail.append((tx, tz))
-        if len(self.trail) > self.trail_max:
-            self.trail.pop(0)
 
     def phase_name(self):
         return self.PHASES[self.phase_idx]
@@ -2625,6 +2824,10 @@ class SimState:
 
     def orbital_vel(self):
         return orbital_velocity(self.t_frac)
+
+    def sphere_pos(self, idx):
+        """Position of sphere idx."""
+        return orbital_position(self.spheres[idx]['t_frac'])
 
 
 class DepletionState:
@@ -2840,16 +3043,31 @@ class App:
         self.mode = "preview"   # "preview" | "model" | "simulate" | "depletion" | "systems" | "custom"
         # MODEL mode: to-scale digital-twin inspector. Cycle focus targets to
         # frame each detailed component; "system" shows the to-scale orbit +
-        # clearance proof that the path clears the black hole.
-        self.model_targets = ["system", "blackhole", "sphere", "station", "string"]
+        # clearance proof that the path clears the black hole. "mechanism" is
+        # the DEFAULT focus: sphere + string + tip mass together, LIVE-animated
+        # (sphere spins at the real sim RPM, string visibly reels in/out with
+        # the sim phase) so opening MODEL mode immediately shows the
+        # pull-to-rotation mechanism actually working, not a frozen snapshot.
+        self.model_targets = ["mechanism", "system", "blackhole", "sphere", "station", "string"]
         self.model_target_names = {
-            "system": "SYSTEM (to scale)", "blackhole": "BLACK HOLE",
+            "mechanism": "MECHANISM (live)", "system": "SYSTEM (to scale)", "blackhole": "BLACK HOLE",
             "sphere": "ENERGY SPHERE", "station": "SPACE STATION", "string": "STRING & TIP",
         }
-        self.model_focus = 0
+        self.model_focus = 0   # index 0 == "mechanism", the default
         self._model_cache = {}
         self._model_real_mpu = {}   # real metres per world-unit, per focus target
         self._model_needs_frame = True
+        # Live "mechanism" focus state: sphere normalised once (shape is fixed,
+        # only rotates via the existing spin/angle mechanism); string rebuilt
+        # whenever the live string_ext changes, reusing the sphere's own
+        # normalisation so the camera framing stays stable while it reels.
+        self._model_mech_sphere = None
+        self._model_mech_string = None
+        self._model_mech_string_ext = -1.0
+        self._model_mech_center = None
+        self._model_mech_inv = 1.0
+        self._model_mech_frame_center = None
+        self._model_mech_frame_radius = 1.0
         self.systems = list(PRESET_SYSTEMS)
         self.system_idx = 0
         self.current_system = self.systems[0]
@@ -2865,14 +3083,14 @@ class App:
         self.status_t = 0.0
         self._custom_surf = None
         self._systems_surf = None
-        # Custom build parameters
+        # Custom build defaults: ~1500 r_s close EP, e~0.99 distant AP, 10 Msun BH
         self.custom_params = {
             'bh_mass_msun': 10.0,
-            'orbit_ep_au': 2.0,
-            'orbit_ap_au': 8.0,
-            'sphere_mass_kg': 3e11,
-            'sphere_rpm_target': 200,
-            'string_diam_m': 0.05,
+            'orbit_ep_au': 0.000296,   # ~1500 r_s for 10 Msun (close)
+            'orbit_ap_au': 0.058943,   # e ~ 0.99 (AP ~200x EP, distant/stationary)
+            'sphere_mass_kg': 5e7,   # ~50,000 t graphene flywheel
+            'sphere_rpm_target': 4000,  # advisory only (RPM is derived)
+            'string_diam_m': 0.5,
             'n_spheres': 1095,
         }
         self.custom_param_keys = list(self.custom_params.keys())
@@ -2884,12 +3102,19 @@ class App:
         # Cache sphere part and original pivots for simulate mode
         self._sphere_cache = None
         self._sphere_pivots = None
+        self._sphere_verts0 = None
         self._string_cache = None
         self._string_cache_ext = -1.0
+        self._string_pivots = None
+        self._string_tilts = None
         self._laser_cache = None
         self._laser_cache_t = -1.0
         self._info_surf = None
         self._help_surf = None
+        # Apply the initial system through the same path as a system switch so all
+        # derived globals (harvest power, per-cycle decay, scene scale) are honest
+        # and consistent for system 0, not just the module-level seed values.
+        self._apply_system(self.systems[0])
 
     def _build_all(self):
         parts = []
@@ -2967,7 +3192,7 @@ class App:
         global DS
         global CURRENT_SYSTEM_NAME
         global HOMES_POWERED
-        global EP_DRIFT_KM
+        global EP_DRIFT_KM, CORRECTION_DV
         global ORBIT_MAX_DS, ORBIT_EP_DS, SCENE_R, BH_DISP_R, SPHERE_DISP_R, STATION_DISP_S, STRING_DISP_SCALE, CAMERA_HOME_DIST
 
         self.current_system = cfg
@@ -3052,7 +3277,10 @@ class App:
         ORBIT_EP_DS = ORBIT_EP_M * DS
         SCENE_R = max(ORBIT_MAX_DS, 0.1)
         BH_DISP_R = min(SCENE_R * 0.04, ORBIT_EP_DS * BH_CLEAR_FRAC / DISK_OUTER_MULT)
-        SPHERE_DISP_R = SCENE_R * 0.015
+        # Cap the sphere relative to BH_DISP_R -- see module-level notes above;
+        # without this the sphere (real ~18 m) renders LARGER than the BH
+        # (real ~28,000 m) whenever they're shown side by side near periastron.
+        SPHERE_DISP_R = min(SCENE_R * 0.015, BH_DISP_R * 0.6)
         STATION_DISP_S = SCENE_R * 0.025
         STRING_DISP_SCALE = SCENE_R * 0.08 / max(STRING_LENGTH_M * DS, 1e-12)
         CAMERA_HOME_DIST = SCENE_R * 1.5
@@ -3061,15 +3289,11 @@ class App:
         annual_energy_j = N_SPHERES * SPHERE_E_PWH
         HOMES_POWERED = int(annual_energy_j / 3.6e10) if annual_energy_j > 0 else 0
 
-        # EP drift per cycle (scales with string energy vs orbital momentum)
-        # Base: 0.0001 km for Gaia BH1 reference; scale by ratio
-        orbital_momentum = SPHERE_MASS_KG * ORBIT_V_EP
-        if orbital_momentum > 0 and STRING_T_MAX > 0:
-            EP_DRIFT_KM = 0.0001 * (SPHERE_E_PWH / (orbital_momentum * 1000.0)) / (3.6e18 / (2.77e11 * 29000.0))
-            if EP_DRIFT_KM < 1e-8:
-                EP_DRIFT_KM = 1e-8
-        else:
-            EP_DRIFT_KM = 0.0001
+        # Per-cycle orbital decay: HONEST value from energy conservation, computed
+        # in SystemConfig (remove sphere_e_oper at periastron, radial/torque-free,
+        # p conserved -> apastron falls). The laser restores exactly this each cycle.
+        EP_DRIFT_KM = abs(cfg.orbit_decay_ap_km)
+        CORRECTION_DV = cfg.correction_dv
 
         # Rebuild parts
         self.parts = self._build_all()
@@ -3080,12 +3304,22 @@ class App:
         # Reset caches
         self._sphere_cache = None
         self._sphere_pivots = None
+        self._sphere_verts0 = None
         self._string_cache = None
         self._string_cache_ext = -1.0
+        self._string_pivots = None
+        self._string_tilts = None
         self._laser_cache = None
         self._laser_cache_t = -1.0
         self._model_cache = {}
         self._model_needs_frame = True
+        self._model_mech_sphere = None
+        self._model_mech_string = None
+        self._model_mech_string_ext = -1.0
+        self._model_mech_center = None
+        self._model_mech_inv = 1.0
+        self._model_mech_frame_center = None
+        self._model_mech_frame_radius = 1.0
         self.renderer.center = np.array([0.0, 0.0, 0.0])
         self.renderer.zoom_min = 0.1
         self.renderer.zoom_max = 100.0
@@ -3122,47 +3356,70 @@ class App:
         if self.mode in ("preview", "simulate"):
             # Exclude sample sphere/string (last 2 parts) - use dynamic instead
             parts = parts[:-2]
-            sx, sz, r = self.sim.orbital_pos()
-            # Cache sphere part (geometry doesn't change, only position)
+            # Cache sphere geometry once (same mesh, different positions per sphere)
             if self._sphere_cache is None:
                 self._sphere_cache = build_sphere()
                 self._sphere_pivots = [mesh.pivot.copy() for mesh in self._sphere_cache.meshes]
-            for i, mesh in enumerate(self._sphere_cache.meshes):
-                mesh.pivot = self._sphere_pivots[i] + np.array([sx, 0, sz])
-                mesh._static_wv = None
-            parts.append(self._sphere_cache)
-            # String geometry changes with extension - cache when ext hasn't changed
-            ext = self.sim.string_ext
-            if self._string_cache is None or abs(ext - self._string_cache_ext) > 0.001:
-                self._string_cache = build_string(ext)
-                self._string_cache_ext = ext
-                self._string_pivots = [m.pivot.copy() for m in self._string_cache.meshes]
-                self._string_tilts = [m._tilt_RT.copy() if m._tilt_RT is not None else None for m in self._string_cache.meshes]
-            string_part = self._string_cache
-            bh_angle = math.atan2(-sz, sx)
-            Ry = rot_y(bh_angle)
-            RyT = Ry.T
-            offset = np.array([sx, 0, sz])
-            for i, mesh in enumerate(string_part.meshes):
-                mesh.pivot = Ry @ self._string_pivots[i] + offset
-                orig_tilt = self._string_tilts[i]
-                if orig_tilt is not None:
-                    mesh._tilt_RT = orig_tilt @ RyT
-                else:
-                    mesh._tilt_RT = RyT.copy()
-                mesh._static_wv = None
-            parts.append(string_part)
-            # Laser visibility changes with phase - cache by t_frac
+                self._sphere_verts0 = [mesh.verts.copy() for mesh in self._sphere_cache.meshes]
+            # Render each sphere at its orbital position
+            for si, sphere in enumerate(self.sim.spheres):
+                sx, sz, r = orbital_position(sphere['t_frac'])
+                r_disp = math.hypot(sx, sz)
+                sphere_scale = min(1.0, (r_disp * 0.35) / max(SPHERE_DISP_R, 1e-30))
+                offset = np.array([sx, 0, sz])
+                sph_meshes = []
+                for mi, mesh in enumerate(self._sphere_cache.meshes):
+                    verts = self._sphere_verts0[mi] * sphere_scale
+                    pivot = self._sphere_pivots[mi] * sphere_scale + offset
+                    nm = Mesh(verts, mesh.faces, mesh.color, mesh.name,
+                              spin=mesh.spin, group=mesh.group,
+                              pivot=tuple(pivot), tilt=mesh.tilt,
+                              emissive=mesh.emissive, alpha=mesh.alpha)
+                    sph_meshes.append(nm)
+                sphere_part = Part(f"sphere_{si}", f"SPHERE {si+1}", sph_meshes, [],
+                                   6, (0, 0, 0), C_SPHERE)
+                parts.append(sphere_part)
+                # String for this sphere
+                ext = sphere['string_ext']
+                if self._string_cache is None or abs(ext - self._string_cache_ext) > 0.01:
+                    self._string_cache = build_string(ext)
+                    self._string_cache_ext = ext
+                    self._string_pivots = [m.pivot.copy() for m in self._string_cache.meshes]
+                    self._string_tilts = [m._tilt_RT.copy() if m._tilt_RT is not None else None for m in self._string_cache.meshes]
+                    self._string_tilt_origs = [m.tilt for m in self._string_cache.meshes]
+                string_part = self._string_cache
+                bh_angle = math.atan2(-sz, sx)
+                Ry = rot_y(bh_angle)
+                RyT = Ry.T
+                str_offset = np.array([sx, 0, sz])
+                str_meshes = []
+                for i, mesh in enumerate(string_part.meshes):
+                    pivot = Ry @ self._string_pivots[i] + str_offset
+                    orig_tilt = self._string_tilts[i]
+                    if orig_tilt is not None:
+                        tilt_RT = orig_tilt @ RyT
+                    else:
+                        tilt_RT = RyT.copy()
+                    nm = Mesh(mesh.verts, mesh.faces, mesh.color, mesh.name,
+                              spin=mesh.spin, group=mesh.group,
+                              pivot=tuple(pivot), tilt=(0, 0),
+                              emissive=mesh.emissive, alpha=mesh.alpha)
+                    nm._tilt_RT = tilt_RT
+                    str_meshes.append(nm)
+                str_part = Part(f"string_{si}", f"STRING {si+1}", str_meshes, [],
+                                6, (0, 0, 0), C_STRING)
+                parts.append(str_part)
+            # Laser (use lead sphere's t_frac for caching)
             tf = self.sim.t_frac
             if self._laser_cache is None or abs(tf - self._laser_cache_t) > 0.01:
                 self._laser_cache = build_gravity_laser(tf)
                 self._laser_cache_t = tf
             parts.append(self._laser_cache)
-            # Energy flow effects (charging glow, harvest beam, laser impact)
+            # Energy flow effects for all spheres
             effects = build_energy_effects(self.sim)
             if effects is not None:
                 parts.append(effects)
-            # Orbital trail
+            # Orbital trails for all spheres
             trail = build_trail(self.sim)
             if trail is not None:
                 parts.append(trail)
@@ -3176,30 +3433,84 @@ class App:
         (so they clear the renderer near-plane and frame consistently); the true
         physical size is conveyed by the scale bar + spec panel."""
         target = self.model_targets[self.model_focus]
+        if target == "mechanism":
+            return self._model_mechanism_parts()
         cached = self._model_cache.get(target)
         if cached is not None:
             return cached
         if target == "system":
             cached = self._model_system_parts()
-            self._model_real_mpu[target] = AU_M   # 1 world unit == 1 AU
+            self._model_real_mpu[target] = 1.0 / DS   # 1 world unit == 1/DS metres (== AP)
         else:
-            if target == "blackhole":
-                cached = [build_black_hole()]
-                real_per_disp = BH_RS / max(BH_DISP_R, 1e-30)
-            elif target == "sphere":
-                cached = [build_sphere()]
-                real_per_disp = SPHERE_RADIUS_M / max(SPHERE_DISP_R, 1e-30)
-            elif target == "station":
-                cached = [build_station()]
-                real_per_disp = 1000.0 / max(STATION_DISP_S, 1e-30)  # ~1 km reference span
-            elif target == "string":
-                cached = [build_string(1.0)]
-                real_per_disp = 1.0 / max(DS * STRING_DISP_SCALE, 1e-30)
-            else:
-                cached, real_per_disp = [], AU_M
+            with _model_detail():
+                if target == "blackhole":
+                    cached = [build_black_hole()]
+                    real_per_disp = BH_RS / max(BH_DISP_R, 1e-30)
+                elif target == "sphere":
+                    cached = [build_sphere()]
+                    real_per_disp = SPHERE_RADIUS_M / max(SPHERE_DISP_R, 1e-30)
+                elif target == "station":
+                    cached = [build_station()]
+                    real_per_disp = 1000.0 / max(STATION_DISP_S, 1e-30)  # ~1 km reference span
+                elif target == "string":
+                    cached = [build_string(1.0)]
+                    real_per_disp = 1.0 / max(DS * STRING_DISP_SCALE, 1e-30)
+                else:
+                    cached, real_per_disp = [], 1.0 / DS
             self._model_real_mpu[target] = self._normalize_parts(cached, real_per_disp)
         self._model_cache[target] = cached
         return cached
+
+    def _model_mechanism_parts(self):
+        """Sphere + string + tip mass together, LIVE: the sphere spins at the
+        real simulated RPM (via the existing spin/angle mechanism, which
+        already works on cached meshes since rotation is a render-time
+        transform, not baked geometry) and the string visibly reels in/out as
+        self.sim.string_ext changes. The sphere's shape never changes, so it's
+        normalised once; the string DOES change shape (its length), so it's
+        rebuilt whenever extension moves, then mapped through the SAME
+        scale/center as the sphere (both already share one coordinate frame --
+        build_string() positions itself relative to SPHERE_DISP_R, same as
+        build_sphere()) so the camera framing stays rock-stable while it reels."""
+        if self._model_mech_sphere is None:
+            with _model_detail():
+                sph = build_sphere()
+            center, radius = self._part_world_bounds([sph])
+            inv = 1.0 / radius if radius > 0 else 1.0
+            for mesh in sph.meshes:
+                mesh.verts = mesh.verts * inv
+                mesh.pivot = (mesh.pivot - center) * inv
+                if mesh._static_wv is not None:
+                    mesh._static_wv = (mesh._static_wv - center) * inv
+            self._model_mech_sphere = sph
+            self._model_mech_center = center
+            self._model_mech_inv = inv
+            real_per_disp = SPHERE_RADIUS_M / max(SPHERE_DISP_R, 1e-30)
+            self._model_real_mpu["mechanism"] = radius * real_per_disp
+            # Frame around the sphere with a fixed generous margin for the
+            # string to grow into -- NOT the string's true full-extension
+            # length. The real ratio (string ~99 km vs sphere ~18 m) is ~5500x;
+            # fitting both at true relative scale in one view would reduce the
+            # sphere (the actual "energy sphere" hero object, with its visible
+            # spin) to an invisible speck. This trades "see the true full
+            # extension in this exact view" for "the sphere stays legible and
+            # the string's growth is still clearly visible" -- the dedicated
+            # "STRING & TIP" focus remains available for true-extent inspection.
+            self._model_mech_frame_center = np.zeros(3)
+            self._model_mech_frame_radius = 6.0
+        ext = self.sim.string_ext
+        if self._model_mech_string is None or abs(ext - self._model_mech_string_ext) > 0.001:
+            with _model_detail():
+                raw = build_string(ext)
+            inv = self._model_mech_inv
+            center = self._model_mech_center
+            for mesh in raw.meshes:
+                mesh.verts = mesh.verts * inv
+                mesh.pivot = (mesh.pivot - center) * inv
+                mesh._static_wv = None
+            self._model_mech_string = raw
+            self._model_mech_string_ext = ext
+        return [self._model_mech_sphere, self._model_mech_string]
 
     def _normalize_parts(self, parts, real_per_disp):
         """Scale+centre parts to unit bounding radius at the origin.
@@ -3223,7 +3534,8 @@ class App:
         keep = {"blackhole", "orbit", "station"}
         parts = [p for p in self.parts if p.key in keep]
         # A detailed sphere parked partway along the outbound leg for context.
-        sph = build_sphere()
+        with _model_detail():
+            sph = build_sphere()
         sx, sz, _ = orbital_position(0.16)
         for mesh in sph.meshes:
             mesh.pivot = mesh.pivot + np.array([sx, 0.0, sz])
@@ -3252,13 +3564,21 @@ class App:
 
     def _frame_model(self):
         """Point the camera at the focused model component and frame it."""
-        parts = self._active_parts()
-        center, radius = self._part_world_bounds(parts)
+        if self.model_targets[self.model_focus] == "mechanism":
+            # Ensure sphere/frame bounds are built, then frame for the string
+            # at FULL extension (see _model_mechanism_parts), not its current
+            # length, so the camera never needs to reframe as it reels live.
+            self._model_mechanism_parts()
+            center = self._model_mech_frame_center
+            radius = self._model_mech_frame_radius
+        else:
+            parts = self._active_parts()
+            center, radius = self._part_world_bounds(parts)
         self.renderer.center = np.asarray(center, dtype=float)
         d = radius * 2.6
         self.renderer.dist = d
         self.renderer.dist_target = d
-        self.renderer.zoom_min = radius * 0.15
+        self.renderer.zoom_min = radius * 0.5
         self.renderer.zoom_max = radius * 40.0
         self.renderer.pan = np.array([0.0, 0.0])
         # keep current az/el; only reframe distance & center
@@ -3539,6 +3859,17 @@ class App:
         else:
             self.renderer.no_label_keys = set()
 
+        # Adaptive face area cull: model mode uses 5.5x tessellation producing
+        # ~24k faces on the sphere alone; at typical framing each face projects
+        # to <1px, well below the default 12px min_area — so nearly all faces
+        # get culled and the sphere becomes invisible. Use a tiny threshold in
+        # model mode (only 1-2 objects on screen, performance is fine).
+        old_min_area = self.renderer.min_area
+        if self.mode == "model":
+            self.renderer.min_area = 0.25
+        else:
+            self.renderer.min_area = 12.0
+
         # Temporarily set renderer parts
         old_parts = self.renderer.parts
         self.renderer.parts = parts
@@ -3546,6 +3877,7 @@ class App:
         self.renderer.render(surf, rect, angles, font=self.font,
                              interactive=True, mouse_pos=mpos)
         self.renderer.parts = old_parts
+        self.renderer.min_area = old_min_area
 
         # HUD
         if self.mode == "depletion":
@@ -3586,7 +3918,8 @@ class App:
         pygame.draw.rect(surf, self.current_system.color_accent, (0, 0, self.W, 3))
         title = f"BHH - {self.current_system.name}"
         if self.mode == "simulate":
-            title += f"  |  SIMULATE  |  Phase: {self.sim.phase_name()}  |  Cycle: {self.sim.cycle_count}"
+            crit = " | ** BH CRITICAL **" if self.sim.bh_critical else ""
+            title += f"  |  SIMULATE  |  {SIM_SPHERES} spheres  |  Harvests: {self.sim.total_harvests}/{HARVESTS_TO_CRITICAL}{crit}"
         else:
             title += "  |  PREVIEW"
         surf.blit(_render_text(self.font, title, self.current_system.color_accent), (12, 8))
@@ -3621,51 +3954,66 @@ class App:
         yy = py + 24
         if self.mode == "preview":
             sx, sz, r = self.sim.orbital_pos()
+            n_harv = sum(1 for s in self.sim.spheres if s['phase_idx'] == 2)
             stats = [
                 f"Mode: PREVIEW (animated)",
                 f"System: {self.current_system.name}",
-                f"Phase: {self.sim.phase_name()}",
+                f"Phase (lead): {self.sim.phase_name()}",
                 "",
                 f"BH mass: {BH_MASS_KG/M_SUN:.2f} M_sun",
                 f"Rs: {BH_RS/1000:.2f} km" if BH_RS >= 1000 else f"Rs: {BH_RS:.3e} m",
-                f"EP: {ORBIT_EP_AU:.4f} AU",
-                f"AP: {ORBIT_AP_AU:.2f} AU",
-                f"Ecc: {ORBIT_E:.4f}",
-                f"Period: {ORBIT_PERIOD_YR:.1f} yr",
+                f"EP: {ORBIT_EP_M/1000:.0f} km ({ORBIT_EP_M/BH_RS:.0f} r_s)",
+                f"AP: {ORBIT_AP_M/1000:.0f} km",
+                f"Ecc: {ORBIT_E:.3f}",
+                f"Period: {fmt_time(ORBIT_PERIOD_S)}",
                 "",
-                f"Orbit pos: {r/AU_M:.3f} AU",
-                f"Sphere RPM: {self.sim.rpm:.0f} / {SPHERE_RPM_TARGET:.0f}",
-                f"Energy: {self.sim.energy_j/3.6e18:.3f} PWh",
-                f"String ext: {self.sim.string_ext*100:.0f}%",
+                f"Constellation: {SIM_SPHERES} spheres",
+                f"  Harvesting now: {n_harv}",
+                f"  Total harvests: {self.sim.total_harvests}",
+                f"  Total energy: {fmt_energy(self.sim.total_energy_harvested)}",
                 "",
-                f"Spheres: {N_SPHERES}",
-                f"Depletion: {DEPLETE_YEARS:.1e} yr",
                 f"Distance: {BH_DIST_LY:.0f} ly",
-                "",
                 f"EP/ISCO: {self._fmt_x(ORBIT_EP_M/BH_RISCO)} (clears BH)",
-                "TAB: MODEL inspector / SIMULATE",
+                "TAB: MODEL / SIMULATE",
                 "Click parts | I for info",
             ]
         else:
+            n_harv = sum(1 for s in self.sim.spheres if s['phase_idx'] == 2)
+            n_chg = sum(1 for s in self.sim.spheres if s['phase_idx'] == 0)
+            n_out = sum(1 for s in self.sim.spheres if s['phase_idx'] == 1)
+            n_in = sum(1 for s in self.sim.spheres if s['phase_idx'] == 3)
+            bh_status = "CRITICAL" if self.sim.bh_critical else ("UNSTABLE" if self.sim.bh_instability > 0.7 else ("WARNING" if self.sim.bh_instability > 0.4 else "STABLE"))
+            bh_col = C_WARN if self.sim.bh_critical else (C_WARN if self.sim.bh_instability > 0.4 else C_GOOD)
             stats = [
                 f"Mode: SIMULATE",
-                f"Phase: {self.sim.phase_name()}",
-                f"Orbit fraction: {self.sim.t_frac:.3f}",
-                f"Period: {ORBIT_PERIOD_YR:.1f} years",
+                f"Phase (lead): {self.sim.phase_name()}",
                 f"Sim speed: {self.sim.speed:.4f}x",
                 "",
-                f"Sphere RPM: {self.sim.rpm:.1f} / {SPHERE_RPM_TARGET:.0f}",
-                f"Energy stored: {self.sim.energy_j:.2e} J",
-                f"  = {self.sim.energy_j/3.6e18:.3f} PWh",
-                f"String extension: {self.sim.string_ext*100:.1f}%",
+                f"Constellation: {SIM_SPHERES} spheres",
+                f"  Harvesting: {n_harv}  Charging: {n_chg}",
+                f"  Outbound: {n_out}  Inbound: {n_in}",
                 "",
-                f"Harvest power: {self.sim.harvest_power_w/1e9:.2f} GW",
+                f"Total harvests: {self.sim.total_harvests}/{HARVESTS_TO_CRITICAL}",
+                f"Total energy: {fmt_energy(self.sim.total_energy_harvested)}",
+                f"BH stability: {bh_status}",
+                f"  Instability: {self.sim.bh_instability*100:.0f}%",
+                "",
+                f"Lead sphere RPM: {self.sim.rpm:.0f} / {SPHERE_RPM_TARGET:.0f}",
+                f"Lead sphere energy: {fmt_energy(self.sim.energy_j)}",
+                f"String ext: {self.sim.string_ext*100:.0f}%",
+                f"Harvest power: {self.sim.harvest_power_w/1e9:.1f} GW",
                 f"Laser: {'ACTIVE' if self.sim.laser_active else 'OFF'}",
-                f"Total harvested: {self.sim.total_energy_harvested/3.6e18:.1f} PWh",
-                f"Orbit drift: {self.sim.orbit_drift_km:.4f} km",
             ]
         for s in stats:
-            col = C_GOOD if "ACTIVE" in s and "Laser" in s else C_TEXT
+            col = C_TEXT
+            if "CRITICAL" in s or "UNSTABLE" in s:
+                col = C_WARN
+            elif "WARNING" in s:
+                col = C_WARN
+            elif "STABLE" in s:
+                col = C_GOOD
+            elif "ACTIVE" in s and "Laser" in s:
+                col = C_GOOD
             if s == "":
                 yy += 6
             else:
@@ -3691,7 +4039,7 @@ class App:
 
             # Energy gauge bar
             bar_y2 = bar_y + 28
-            surf.blit(_render_text(self.fsmall, "ENERGY (PWh)", C_DIM), (px+8, bar_y2))
+            surf.blit(_render_text(self.fsmall, "ENERGY", C_DIM), (px+8, bar_y2))
             e_frac = self.sim.energy_j / SPHERE_E_PWH if SPHERE_E_PWH > 0 else 0
             e_frac = max(0.0, min(1.0, e_frac))
             pygame.draw.rect(surf, C_PANEL_HI, (bar_x, bar_y2 + 14, bar_w, 8))
@@ -3699,6 +4047,16 @@ class App:
             e_col = C_PHASE3 if e_frac > 0.01 else C_DIM
             if fill_w2 > 0:
                 pygame.draw.rect(surf, e_col, (bar_x, bar_y2 + 14, fill_w2, 8))
+
+            # BH instability gauge bar
+            bar_y3 = bar_y2 + 28
+            inst_label = "BH INSTABILITY" + (" ** CRITICAL **" if self.sim.bh_critical else "")
+            surf.blit(_render_text(self.fsmall, inst_label, C_WARN if self.sim.bh_instability > 0.4 else C_DIM), (px+8, bar_y3))
+            pygame.draw.rect(surf, C_PANEL_HI, (bar_x, bar_y3 + 14, bar_w, 8))
+            fill_w3 = int(bar_w * self.sim.bh_instability)
+            inst_col = C_WARN if self.sim.bh_instability > 0.7 else (_mix(C_GOOD, C_WARN, self.sim.bh_instability) if self.sim.bh_instability > 0.3 else C_GOOD)
+            if fill_w3 > 0:
+                pygame.draw.rect(surf, inst_col, (bar_x, bar_y3 + 14, fill_w3, 8))
 
         # Left panel: orbital info + component status (simulate only)
         lx = 12
@@ -3710,13 +4068,13 @@ class App:
             v = self.sim.orbital_vel()
             yy = ly + 24
             ostats = [
-                f"EP: {ORBIT_EP_AU:.4f} AU",
-                f"AP: {ORBIT_AP_AU:.2f} AU",
-                f"Eccentricity: {ORBIT_E:.4f}",
-                f"Current r: {r/AU_M:.3f} AU",
+                f"EP: {ORBIT_EP_M/1000:.0f} km ({ORBIT_EP_M/BH_RS:.0f} r_s)",
+                f"AP: {ORBIT_AP_M/1000:.0f} km",
+                f"Eccentricity: {ORBIT_E:.3f}",
+                f"Current r: {r/1000:.0f} km",
                 f"Current v: {v/1000:.2f} km/s",
                 f"Gravity at r: {gravity_at_distance(r):.2e} m/s^2",
-                f"Position: ({sx:.3f}, {sz:.3f}) AU",
+                f"Period: {fmt_time(ORBIT_PERIOD_S)}",
             ]
             for s in ostats:
                 surf.blit(_render_text(self.fsmall, s, C_TEXT), (lx+8, yy))
@@ -3913,16 +4271,16 @@ class App:
         if tgt == "system":
             header = "TO-SCALE SYSTEM"
             specs = [
-                "Orbit rendered 1 AU = 1 unit.",
-                "Bodies enlarged for visibility;",
+                "Orbit rendered to scale (apastron",
+                "= 1 unit). Bodies enlarged for visibility;",
                 "black hole capped so the path",
                 "clearly CLEARS it (see below).",
                 "",
-                f"EP (periastron): {ORBIT_EP_AU:.4f} AU",
-                f"AP (apastron):   {ORBIT_AP_AU:.2f} AU",
-                f"Eccentricity:    {ORBIT_E:.4f}",
-                f"Semi-major axis: {ORBIT_A_M/AU_M:.2f} AU",
-                f"Period:          {ORBIT_PERIOD_YR:.2f} yr",
+                f"EP (periastron): {ORBIT_EP_M/1000:.0f} km",
+                f"AP (apastron):   {ORBIT_AP_M/1000:.0f} km ({ORBIT_AP_M/ORBIT_EP_M:.0f}x EP)",
+                f"Eccentricity:    {ORBIT_E:.3f}",
+                f"Semi-major axis: {ORBIT_A_M/1000:.0f} km",
+                f"Period:          {fmt_time(ORBIT_PERIOD_S)}",
                 "",
                 f"Schwarzschild r: {self._fmt_len(BH_RS)}",
                 f"ISCO (3 r_s):    {self._fmt_len(BH_RISCO)}",
@@ -3932,6 +4290,23 @@ class App:
                 "",
                 f"v at EP: {ORBIT_V_EP/1000:.1f} km/s",
                 f"v at AP: {ORBIT_V_AP/1000:.1f} km/s",
+            ]
+        elif tgt == "mechanism":
+            header = "PULL-TO-ROTATION MECHANISM (live)"
+            specs = [
+                f"Phase: {self.sim.phase_name()}",
+                f"Sphere RPM: {self.sim.rpm:.0f} / {SPHERE_RPM_TARGET:.0f} (max {SPHERE_RPM_MAX:.0f})",
+                f"Energy stored: {fmt_energy(self.sim.energy_j)}",
+                f"String extension: {self.sim.string_ext*100:.0f}%",
+                "",
+                f"Sphere: {SPHERE_MASS_KG:.2e} kg, R={SPHERE_RADIUS_M:.0f} m",
+                f"Material: graphene composite ({SPHERE_TENSILE_PA/1e9:.0f} GPa)",
+                f"String: {STRING_DIAM_M*100:.0f} cm dia x {STRING_LENGTH_M/1000:.1f} km",
+                f"Tip mass: {STRING_TIP_MASS:.2e} kg (osmium)",
+                "",
+                "Sphere spins at the live simulated RPM;",
+                "string reels in/out with the live phase.",
+                "-> this view is always animating, live",
             ]
         else:
             parts = self._active_parts()
@@ -3995,9 +4370,14 @@ class App:
             lbl_x = seg_x + seg_w // 2
             lbl = _render_text(self.fsmall, label, col if self.sim.phase_idx == phases.index((label, col, lo, hi)) else C_DIM)
             surf.blit(lbl, (lbl_x - lbl.get_width() // 2, bar_y + bar_h + 2))
-        # Current position marker
+        # Current position marker (lead sphere)
         pos_x = bar_x + int(bar_w * self.sim.t_frac)
         pygame.draw.line(surf, C_ACCENT, (pos_x, bar_y - 2), (pos_x, bar_y + bar_h + 2), 2)
+        # Markers for all other spheres
+        for si in range(1, SIM_SPHERES):
+            sx_frac = self.sim.spheres[si]['t_frac']
+            mx = bar_x + int(bar_w * sx_frac)
+            pygame.draw.circle(surf, C_DIM, (mx, bar_y + bar_h // 2), 2)
 
     def _draw_systems_hud(self):
         """Show all available BH harvesting systems for selection."""
@@ -4038,16 +4418,16 @@ class App:
                 (f"  = {sys.bh_mass_kg:.3e} kg", C_TEXT),
                 (f"Rs: {sys.bh_rs/1000:.2f} km" if sys.bh_rs >= 1000 else f"Rs: {sys.bh_rs:.3e} m", C_TEXT),
                 (f"Density: {sys.bh_mass_kg / ((4.0/3.0) * 3.14159 * sys.bh_rs**3):.2e} kg/m^3" if sys.bh_rs > 0 else "Density: N/A", C_TEXT),
-                (f"EP: {sys.orbit_ep_au:.2f} AU", C_EP),
-                (f"AP: {sys.orbit_ap_au:.2f} AU", C_AP),
+                (f"EP: {sys.orbit_ep_m/1000:.0f} km ({sys.orbit_ep_m/sys.bh_rs:.0f} r_s)", C_EP),
+                (f"AP: {sys.orbit_ap_m/1000:.0f} km ({sys.orbit_ap_m/sys.orbit_ep_m:.0f}x EP)", C_AP),
                 (f"Ecc: {sys.orbit_e:.3f}", C_TEXT),
-                (f"Period: {sys.orbit_period_yr:.1f} yr", C_TEXT),
+                (f"Period: {fmt_time(sys.orbit_period_s)}", C_TEXT),
                 (f"V@EP: {sys.orbit_v_ep/1000:.1f} km/s", C_TEXT),
                 (f"V@AP: {sys.orbit_v_ap/1000:.1f} km/s", C_TEXT),
                 (f"Sphere: {sys.sphere_mass_kg:.1e} kg", C_SPHERE),
                 (f"  R: {sys.sphere_radius_m:.0f} m", C_TEXT),
-                (f"RPM: {sys.sphere_rpm_target:.0f}", C_TEXT),
-                (f"Energy: {sys.sphere_e_pwh/3.6e18:.2f} PWh", C_PHASE3),
+                (f"RPM: {sys.sphere_rpm_target:.0f} (max {sys.sphere_rpm_max:.0f})", C_TEXT),
+                (f"Energy: {fmt_energy(sys.sphere_e_oper)}", C_PHASE3),
                 (f"Spheres: {sys.n_spheres}", C_TEXT),
                 (f"Hawking T: {sys.hawking_temperature():.2e} K", C_BH_GLOW),
                 (f"Depletion: {sys.deplete_years:.1e} yr", C_DIM),
@@ -4191,16 +4571,16 @@ class App:
                 f"Rs: {preview.bh_rs/1000:.2f} km",
                 f"BH density: {preview.bh_mass_kg / ((4.0/3.0)*PI*preview.bh_rs**3):.3e} kg/m^3",
                 f"Eccentricity: {preview.orbit_e:.3f}",
-                f"Period: {preview.orbit_period_yr:.1f} yr",
+                f"Period: {fmt_time(preview.orbit_period_s)}",
                 f"V@EP: {preview.orbit_v_ep/1000:.1f} km/s",
                 f"V@AP: {preview.orbit_v_ap/1000:.1f} km/s",
-                f"Sphere R: {preview.sphere_radius_m:.0f} m",
-                f"Energy/harvest: {preview.sphere_e_pwh/3.6e18:.2f} PWh",
-                f"String length: {preview.string_length_m/1000:.0f} km",
+                f"Sphere R: {preview.sphere_radius_m:.0f} m  (RPM max {preview.sphere_rpm_max:.0f})",
+                f"Energy/harvest: {fmt_energy(preview.sphere_e_oper)}",
+                f"String length: {preview.string_length_m/1000:.1f} km ({preview.string_diam_m*100:.0f} cm)",
                 f"String tension: {preview.string_t_max:.2e} N",
-                f"Hawking T: {preview.hawking_temperature():.2e} K",
+                f"AP decay/cycle: {preview.orbit_decay_ap_km:.3f} km",
                 f"Depletion: {preview.deplete_years:.1e} yr",
-                f"Annual energy: {preview.sphere_e_pwh * preview.n_spheres / 3.6e18:.0f} PWh/yr",
+                f"Annual energy: {fmt_energy(preview.sphere_e_oper * preview.n_spheres)}/yr",
             ]
             # Validation warnings
             warnings = []
@@ -4489,8 +4869,8 @@ class App:
                     f"Radius: {SPHERE_RADIUS_M:.0f} m",
                     f"Material: Graphene composite",
                     f"Tensile strength: {SPHERE_TENSILE_PA/1e9:.0f} GPa",
-                    f"Max RPM: {SPHERE_RPM_MAX:.0f} -> {SPHERE_E_MAX:.2e} J ({SPHERE_E_MAX/3.6e18:.2f} PWh)",
-                    f"Target RPM: {SPHERE_RPM_TARGET:.0f} -> {SPHERE_E_OPER:.2e} J ({SPHERE_E_OPER/3.6e18:.2f} PWh)",
+                    f"Max RPM: {SPHERE_RPM_MAX:.0f} -> {SPHERE_E_MAX:.2e} J ({fmt_energy(SPHERE_E_MAX)})",
+                    f"Target RPM: {SPHERE_RPM_TARGET:.0f} -> {SPHERE_E_OPER:.2e} J ({fmt_energy(SPHERE_E_OPER)})",
                     f"Moment of inertia: {SPHERE_I:.2e} kg m^2",
                     f"RTG power: {SPHERE_RTG_W/1000:.0f} kW total (Pu-238)",
                     f"Halbach freq: {HALBACH_FREQ_HZ:.1f} Hz (cryogenic NdFeB)",
@@ -4498,7 +4878,7 @@ class App:
                     "Radiation shielding: boron composites",
                     "Safety: halt if dg >10%, 20% excess impact",
                     "AI: neural networks for anomaly detection",
-                    f"Reliability: 99.9% over {ORBIT_PERIOD_YR:.1f}-year cycles (Monte Carlo validated)",
+                    f"Reliability: 99.9% over {fmt_time(ORBIT_PERIOD_S)} cycles (Monte Carlo validated)",
                     "Internal flywheel: counter-rotating angular momentum",
                     "Cooling: cryogenic fins between Halbach magnets",
                     "Lattice: graphene meridian ribs for integrity",
@@ -4531,22 +4911,22 @@ class App:
             ]
 
             right_sections = [
-                ("ORBIT", [
-                    f"Periastron: {ORBIT_EP_AU:.4f} AU",
-                    f"Apastron: {ORBIT_AP_AU:.2f} AU",
-                    f"Semi-major axis: {ORBIT_A_M/AU_M:.2f} AU",
-                    f"Eccentricity: {ORBIT_E:.4f}",
-                    f"Period: {ORBIT_PERIOD_YR:.1f} years",
+                ("ORBIT (close EP + distant high-e AP)", [
+                    f"Periastron: {ORBIT_EP_M/1000:.0f} km ({ORBIT_EP_M/BH_RS:.0f} r_s)",
+                    f"Apastron: {ORBIT_AP_M/1000:.0f} km ({ORBIT_AP_M/ORBIT_EP_M:.0f}x EP, near-stationary)",
+                    f"Semi-major axis: {ORBIT_A_M/1000:.0f} km",
+                    f"Eccentricity: {ORBIT_E:.3f}",
+                    f"Period: {fmt_time(ORBIT_PERIOD_S)}",
                     f"v at EP: {ORBIT_V_EP/1000:.1f} km/s",
                     f"v at AP: {ORBIT_V_AP/1000:.1f} km/s",
                     f"Gravity at EP: {gravity_at_distance(ORBIT_EP_M):.2e} m/s^2",
                     f"Gravity at AP: {gravity_at_distance(ORBIT_AP_M):.2e} m/s^2",
-                    f"EP drift/cycle: {EP_DRIFT_KM:.4f} km",
+                    f"AP decay/cycle: {EP_DRIFT_KM:.3f} km (honest; laser-restored)",
                     f"EP/ISCO ratio: {ORBIT_EP_M/BH_RISCO:.0f}x (stable orbit)",
                     f"NOTE: BH/sphere/station visually enlarged",
                 ]),
                 ("SPACE STATION & HARVESTING", [
-                    f"Position: Circular orbit at AP ({ORBIT_AP_AU:.2f} AU)",
+                    f"Position: Circular orbit at AP ({ORBIT_AP_M/1000:.0f} km)",
                     f"Station v_circ: {math.sqrt(G*BH_MASS_KG/ORBIT_AP_M)/1000:.1f} km/s",
                     f"Gravity at AP: {gravity_at_distance(ORBIT_AP_M):.2e} m/s^2",
                     f"Station-keeping: Unbalanced gyroscopic flywheel",
@@ -4567,14 +4947,19 @@ class App:
                     "Power: solar arrays (backup) + fusion (primary)",
                     "Crew: pressurized module with life support",
                 ]),
-                ("CONSTELLATION & DEPLETION", [
-                    f"Spheres: {N_SPHERES}",
-                    f"Harvest rate: 1/day",
+                ("CONSTELLATION & BH STABILITY", [
+                    f"Simultaneous spheres: {SIM_SPHERES} (evenly phased)",
+                    f"Full constellation: {N_SPHERES} (1 harvest/day)",
+                    f"Energy per harvest: {fmt_energy(HARVEST_ENERGY_J)}",
+                    f"Total per cycle ({SIM_SPHERES}): {fmt_energy(SIM_SPHERES * HARVEST_ENERGY_J)}",
                     f"Mass/harvest (E=mc^2): {MASS_PER_HARVEST:.0f} kg",
-                    f"Harvests to deplete: {HARVESTS_TO_DEPLETE:.2e}",
+                    f"BH critical threshold: {HARVESTS_TO_CRITICAL} harvests",
+                    f"  After threshold: orbit destabilizes, shutdown required",
+                    f"Harvests to full depletion: {HARVESTS_TO_DEPLETE:.2e}",
                     f"Depletion time: {DEPLETE_YEARS:.2e} years",
-                    f"Annual energy: {N_SPHERES * SPHERE_E_PWH / 3.6e18:.0f} PWh/yr",
+                    f"Annual energy (full): {N_SPHERES * SPHERE_E_PWH / 3.6e18:.0f} PWh/yr",
                     f"Powers ~{HOMES_POWERED/1e6:.0f}M homes continuously",
+                    "Sim tracks: total harvests, total energy, BH instability %",
                     "Depletion visuals: ergosphere, jets, Doppler disk",
                     "Explosion: gamma flash, shockwave, ring waves",
                     "Final: Planck remnant, wormhole, white hole",
@@ -4586,9 +4971,9 @@ class App:
                     "   Retraction: drum motor, ~0.05% of harvested energy",
                     "   Correction at f~5deg, Oberth effect, ~0.001 m/s delta-v",
                     "3. Harvesting at AP: Magnetic coupling extracts spin to 0 RPM",
-                    f"   {harvest_power()/1e9:.0f} GW for {STATION_HARVEST_S/86400:.0f} days -> {HARVEST_ENERGY_J:.2e} J",
-                    "4. Inbound: Coast 0 RPM, laser restores EP at AP (~0.0005 m/s)",
-                    f"Cycle repeats every {ORBIT_PERIOD_YR:.1f} years per sphere",
+                    f"   {harvest_power()/1e9:.0f} GW over {fmt_time(STATION_HARVEST_S)} near AP -> {fmt_energy(HARVEST_ENERGY_J)}",
+                    f"4. Inbound: coast 0 RPM, laser restores AP decay (dv~{CORRECTION_DV:.2f} m/s)",
+                    f"Cycle repeats every {fmt_time(ORBIT_PERIOD_S)} per sphere",
                 ]),
             ]
 
@@ -4633,8 +5018,9 @@ class App:
             pygame.draw.line(s, (60, 80, 110), (20, 44), (w-20, 44), 1)
             helps = [
                 ("TAB", "Cycle: PREVIEW -> MODEL -> SIMULATE -> DEPLETION -> SYSTEMS -> CUSTOM"),
-                ("PREVIEW", "Whole system, orbit to scale, animated (path clears BH)"),
+                ("PREVIEW", "Whole system, orbit to scale, animated (6 spheres in constellation)"),
                 ("MODEL", "To-scale inspector: [ / ] focus BH/sphere/station/string/system"),
+                ("SIMULATE", "6-sphere constellation, total energy, BH critical after 100 harvests"),
                 ("[ / ]", "MODEL mode: cycle focused component"),
                 ("S", "Systems selection screen"),
                 ("C", "Custom system builder"),
@@ -4681,8 +5067,10 @@ class App:
                 "Orbit: path, direction arrows, phase markers,",
                 "  velocity vectors at EP and AP",
                 "Laser: 3-layer beam, targeting reticle, impact glow",
-                "Effects: energy beam, flow particles, magnetic field,",
-                "  spin indicator, charging glow, laser impact",
+                "Effects: energy beams, charging glow, harvest glow,",
+                "  laser impact, coil glow (per-sphere)",
+                "Constellation: 6 spheres in phased orbit,",
+                "  total energy counter, BH instability tracker",
                 "Depletion: ergosphere, jets, Doppler disk, lensing,",
                 "  Hawking radiation, ISCO ring, harvesting beams",
                 "Explosion: gamma flash, shockwave, ring waves, jets,",
@@ -4701,7 +5089,7 @@ class App:
             "\n" + "=" * 72 +
             f"\n {self.current_system.name} -> tidal gradient -> string -> pull-to-rotation -> spin sphere" +
             "\n -> coast to AP -> magnetic inductive harvest -> gravity laser correction" +
-            f"\n -> repeat. {SPHERE_E_PWH/3.6e18:.1f} PWh per cycle, {N_SPHERES} spheres, 1 harvest/day." +
+            f"\n -> repeat. {SPHERE_E_OPER/3.6e12:.0f} GWh per cycle, {SIM_SPHERES} spheres in constellation, BH critical after {HARVESTS_TO_CRITICAL} harvests." +
             "\n" +
             "\n DETAILED MODEL COMPONENTS:" +
             "\n   Black Hole: event horizon, ergosphere, photon sphere, ISCO ring," +
@@ -4714,7 +5102,8 @@ class App:
             "\n     solar arrays, gyro flywheel, coil array, gravity laser, fusion reactor" +
             "\n   Orbit: path, direction arrows, phase markers, velocity vectors" +
             "\n   Laser: 3-layer beam, targeting reticle, impact glow" +
-            "\n   Effects: energy beam, flow particles, magnetic field, spin indicator" +
+            "\n   Effects: energy beams, charging glow, harvest glow, laser impact" +
+            "\n   Constellation: 6 phased spheres, total energy, BH critical tracker" +
             "\n   Depletion: Hawking radiation, jets, Doppler disk, explosion + wormhole" +
             "\n" +
             "\n Now supports 5 preset systems + custom builds!" +
